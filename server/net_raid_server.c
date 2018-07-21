@@ -17,6 +17,8 @@
 #include "raid_1_server.h"
 
 #define BACKLOG 10
+#define PATH_LEN 256
+#define BUF_SIZE 1024
 
 char *global_path;
 
@@ -38,27 +40,43 @@ static void print2(const char *syscall, const char *path)
 
 static void print2p(const char *syscall, void *pointer)
 {
-	char *info_msg = (char*)malloc(sizeof(void *) + strlen(syscall) + 31);
+	char *info_msg = (char*)malloc(strlen(syscall) + 41);
 	sprintf(info_msg, "raid_1_%s: Pointer is %p", syscall, pointer);
 	nrf_print_info(info_msg);
 	free(info_msg);
 }
 
-// static void print3(const char *syscall, const char *from, const char *to)
-// {
-// 	char *info_msg = (char*)malloc(strlen(from) + strlen(to) + strlen(syscall) + 19);
-// 	sprintf(info_msg, "raid_1_%s: From %s to %s", syscall, from, to);
-// 	nrf_print_info(info_msg);
-// 	free(info_msg);
-// }
+static void print2i(const char *syscall, int num)
+{
+	char *info_msg = (char*)malloc(strlen(syscall) + 41);
+	sprintf(info_msg, "raid_1_%s: Number is %d", syscall, num);
+	nrf_print_value(info_msg);
+	free(info_msg);
+}
 
-int call_raid_1_function(char *buf)
+static void print4siii(const char *syscall, int num1, int num2, int num3)
+{
+	char *info_msg = (char*)malloc(strlen(syscall) + 100);
+	sprintf(info_msg, "raid_1_%s: Number 1 is %d, nuber 2 is %d and number 3 is %d", syscall, num1, num2, num3);
+	nrf_print_value(info_msg);
+	free(info_msg);
+}
+
+static void print3(const char *syscall, const char *from, const char *to)
+{
+	char *info_msg = (char*)malloc(strlen(from) + strlen(to) + strlen(syscall) + 19);
+	sprintf(info_msg, "raid_1_%s: From %s to %s", syscall, from, to);
+	nrf_print_info(info_msg);
+	free(info_msg);
+}
+
+int call_raid_1_function(int client_fd, char *buf)
 {
 	print1(buf);
 
 	if (strcmp(buf, "lstat") == 0)
 	{
-		char *path = malloc(256);
+		char *path = malloc(PATH_LEN);
 		path[0] = '\0';
 
 		strcat(path, global_path);
@@ -70,17 +88,21 @@ int call_raid_1_function(char *buf)
 		int rv = lstat(path, stat);
 		nrf_print_note("Stat after lstat");
 		nrf_print_struct(stat, "stat", 1, 1);
+		print2i(buf, rv);
+		print2i(buf, errno);
 		free(path);
 
 		buf--;
 
 		memcpy(buf, stat, sizeof(struct stat));
 		memcpy(buf + sizeof(struct stat), &rv, sizeof(int));
-		return sizeof(struct stat) + sizeof(int);
+		memcpy(buf + sizeof(struct stat) + sizeof(int), &errno, sizeof(int));
+
+		return sizeof(struct stat) + sizeof(int) + sizeof(int);
 	}
 	else if (strcmp(buf, "access") == 0)
 	{
-		char *path = malloc(256);
+		char *path = malloc(PATH_LEN);
 		path[0] = '\0';
 
 		strcat(path, global_path);
@@ -89,18 +111,21 @@ int call_raid_1_function(char *buf)
 		print2(buf, path);
 
 		int mask;
-		memcpy(&mask, buf + 8 + strlen(path), sizeof(int));
+		memcpy(&mask, buf + 8 + strlen(buf + 7), sizeof(int));
 
 		int rv = access(path, mask);
 
 		free(path);
 
+		buf--;
+
 		memcpy(buf, &rv, sizeof(int));
-		return sizeof(int);
+		memcpy(buf + sizeof(int), &errno, sizeof(int));
+		return sizeof(int) + sizeof(int);
 	}
 	else if (strcmp(buf, "opendir") == 0)
 	{
-		char *path = malloc(256);
+		char *path = malloc(PATH_LEN);
 		path[0] = '\0';
 		
 		strcat(path, global_path);
@@ -116,10 +141,11 @@ int call_raid_1_function(char *buf)
 
 		buf--;
 		memcpy(buf, &dir, sizeof(DIR *));
+		memcpy(buf + sizeof(DIR *), &errno, sizeof(int));
 
 		print2p("opendir", (DIR *)(*(uint64_t *)buf));
 
-		return sizeof(DIR *);
+		return sizeof(DIR *) + sizeof(int);
 	}
 	else if(strcmp(buf, "readdir") == 0)
 	{
@@ -138,14 +164,16 @@ int call_raid_1_function(char *buf)
 		{
 			nrf_print_struct(de, "dirent", 1, 1);
 			memcpy(buf, de, sizeof(struct dirent));
+			memcpy(buf + sizeof(struct dirent), &errno, sizeof(int));
 		}
 		else
 		{
 			nrf_print_warning("We have \033[31;1mNULL\033[0m");
 			sprintf(buf, "NULL");
+			memcpy(buf + 5, &errno, sizeof(int));
 		}
 
-		return sizeof(struct dirent);
+		return sizeof(struct dirent) + sizeof(int);
 	}
 	else if (strcmp(buf, "closedir") == 0)
 	{
@@ -157,11 +185,14 @@ int call_raid_1_function(char *buf)
 		closedir(dir);
 
 		buf--;
-		return 0;
+
+		memcpy(buf, &errno, sizeof(int));
+
+		return sizeof(int);
 	}
 	else if (strcmp(buf, "mknod") == 0)
 	{
-		char *path = malloc(256);
+		char *path = malloc(PATH_LEN);
 		path[0] = '\0';
 
 		strcat(path, global_path);
@@ -171,36 +202,177 @@ int call_raid_1_function(char *buf)
 
 		mode_t mode;
 		dev_t rdev;
-		memcpy(&mode, buf + 7 + strlen(path), sizeof(mode_t));
-		memcpy(&rdev, buf + 7 + strlen(path) + sizeof(mode_t), sizeof(dev_t));
+		memcpy(&mode, buf + 7 + strlen(buf + 6), sizeof(mode_t));
+		memcpy(&rdev, buf + 7 + strlen(buf + 6) + sizeof(mode_t), sizeof(dev_t));
 
 		int rv = mknod(path, mode, rdev);
 
 		free(path);
 
+		buf--;
 		memcpy(buf, &rv, sizeof(int));
-		return sizeof(int);
+		memcpy(buf + sizeof(int), &errno, sizeof(int));
+		return sizeof(int) + sizeof(int);
 	}
 	else if (strcmp(buf, "mkdir") == 0)
 	{
-		char *path = malloc(256);
+		char *path = malloc(PATH_LEN);
 		path[0] = '\0';
 
 		strcat(path, global_path);
 		strcat(path, buf + 6);
 
-		print2p(buf, path);
+		print2(buf, path);
 
 		mode_t mode;
-		memcpy(&mode, buf + 7 + strlen(path), sizeof(mode_t));
+		memcpy(&mode, buf + 7 + strlen(buf + 6), sizeof(mode_t));
 
 		int rv = mkdir(path, mode);
 
-		printf("\33[35mmkdir rv & errno: %d, %s\n\33[0m", rv, strerror(errno));
+		free(path);
+
+		buf--;
+		memcpy(buf, &rv, sizeof(int));
+		memcpy(buf + sizeof(int), &errno, sizeof(int));
+		return sizeof(int) + sizeof(int);
+	}
+	else if (strcmp(buf, "open") == 0)
+	{
+		char *path = malloc(PATH_LEN);
+		path[0] = '\0';
+
+		strcat(path, global_path);
+		strcat(path, buf + 5);
+
+		print2(buf, path);
+
+		int flags;
+		memcpy(&flags, buf + 6 + strlen(buf + 5), sizeof(int));
+
+		mode_t mode;
+		memcpy(&mode, buf + 6 + strlen(buf + 5) + sizeof(int), sizeof(mode_t));
+
+		int rv = open(path, flags, mode);
+
+		print2i(buf, rv);
 
 		free(path);
 
+		buf--;
 		memcpy(buf, &rv, sizeof(int));
+		memcpy(buf + sizeof(int), &errno, sizeof(int));
+		return sizeof(int) + sizeof(int);
+	}
+	else if (strcmp(buf, "unlink") == 0)
+	{
+		char *path = malloc(PATH_LEN);
+		path[0] = '\0';
+
+		strcat(path, global_path);
+		strcat(path, buf + 7);
+
+		print2(buf, path);
+
+		int rv = unlink(path);
+
+		free(path);
+
+		buf--;
+		memcpy(buf, &rv, sizeof(int));
+		memcpy(buf + sizeof(int), &errno, sizeof(int));
+		return sizeof(int) + sizeof(int);
+	}
+	else if (strcmp(buf, "rmdir") == 0)
+	{
+		char *path = malloc(PATH_LEN);
+		path[0] = '\0';
+
+		strcat(path, global_path);
+		strcat(path, buf + 6);
+
+		print2(buf, path);
+
+		int rv = rmdir(path);
+
+		free(path);
+
+		buf--;
+		memcpy(buf, &rv, sizeof(int));
+		memcpy(buf + sizeof(int), &errno, sizeof(int));
+		return sizeof(int) + sizeof(int);
+	}
+	else if (strcmp(buf, "rename") == 0)
+	{
+		char *from = malloc(PATH_LEN);
+		char *to = malloc(PATH_LEN);
+		from[0] = '\0';
+		to[0] = '\0';
+
+		strcat(from, global_path);
+		strcat(from, buf + 7);
+
+		strcat(to, global_path);
+		strcat(to, buf + 8 + strlen(buf + 7));
+
+		print3(buf, from, to);
+
+		int rv = rename(from, to);
+
+		free(from);
+		free(to);
+
+		buf--;
+		memcpy(buf, &rv, sizeof(int));
+		memcpy(buf + sizeof(int), &errno, sizeof(int));
+		return sizeof(int) + sizeof(int);
+	}
+	else if (strcmp(buf, "pread") == 0)
+	{	
+		int fd;
+		size_t size;
+		off_t offset;
+		memcpy(&fd, buf + 6, sizeof(int));
+		memcpy(&size, buf + 6 + sizeof(int), sizeof(size_t));
+		memcpy(&offset, buf + 6 + sizeof(int) + sizeof(size_t), sizeof(off_t));
+
+		print4siii(buf, fd, size, offset);
+
+		char *read_buf = malloc(size);
+
+		int rv = pread(fd, read_buf, size, offset);
+
+		print2i(buf, rv);
+		print2(buf, read_buf);
+
+		buf--;
+
+		memcpy(buf, &rv, sizeof(int));
+		memcpy(buf + sizeof(int), &errno, sizeof(int));
+
+		write(client_fd, buf, sizeof(int) * 2);
+
+		while (rv > 0)
+		{
+			memcpy(buf, read_buf, BUF_SIZE);
+			read_buf += BUF_SIZE;
+			rv -= BUF_SIZE;
+
+			write(client_fd, buf, BUF_SIZE);
+		}
+
+		return 0;
+	}
+	else if (strcmp(buf, "close") == 0)
+	{
+		int fd;
+		memcpy(&fd, buf + 6, sizeof(int));
+
+		print2i(buf, fd);
+
+		close(fd);
+
+		buf--;
+		memcpy(buf, &errno, sizeof(int));
 		return sizeof(int);
 	}
 	else
@@ -211,10 +383,10 @@ int call_raid_1_function(char *buf)
 
 void client_handler(int client_fd)
 {
-    char buf[1024];
+    char buf[BUF_SIZE];
     int data_size;
     while (1) {
-        data_size = read (client_fd, &buf, 1024);
+        data_size = read (client_fd, &buf, BUF_SIZE);
         if (data_size <= 0)
             break;
 
@@ -222,7 +394,7 @@ void client_handler(int client_fd)
         {
         	if (buf[0] == '1')
         	{
-        		data_size = call_raid_1_function(buf + 1);
+        		data_size = call_raid_1_function(client_fd, buf + 1);
 
         		printf("\33[35mbuf: %s\n\33[0m", buf);
         		// write(1, buf, data_size);

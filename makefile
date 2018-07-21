@@ -2,7 +2,7 @@ CLIENT = net_raid_client
 SERVER = net_raid_server
 LIBS = -lm `pkg-config fuse --cflags --libs`
 CC = gcc
-CFLAGS = -g -Wall
+CFLAGS = -g -Wall -Wextra
 
 .PHONY: default all clean
 
@@ -34,7 +34,7 @@ clean:
 	-rm -f $(CLIENT)
 	-rm -f $(SERVER)
 	-rm -f ../nrf.log
-	-rm -f error.log
+	-rm -f ../error.log
 
 unmount:
-	sudo umount -f /home/babdus/Documents/OS/Kosciuszko
+	sudo umount -f /home/vagrant/code/personal/final-nrf/mount_dirs/Kosciuszko

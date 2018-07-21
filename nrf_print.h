@@ -4,7 +4,11 @@
 #include <stdio.h>
 #include <errno.h>
 #include <string.h>
+#include <unistd.h>
+#include <stdlib.h>
 
+#include <math.h>
+#include <inttypes.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -20,7 +24,12 @@ void nrf_print_warning(const char *);
 void nrf_print_note(const char *);
 void nrf_print_success(const char *);
 void nrf_print_info(const char *);
+void nrf_print_value(const char *);
 
 void nrf_print_struct(void *structure, char *name, int mode, int fd);
+
+void dumphex(const void *, size_t);
+
+char *cur_time();
 
 #endif

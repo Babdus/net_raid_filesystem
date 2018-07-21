@@ -117,40 +117,99 @@ static void print_stat(struct stat *stat, int mode, int fd)
 	}
 }
 
-static char *cur_time()
+static char *weekday(int day)
+{
+	switch(day)
+	{
+		case 0: return "Sunday";
+		case 1: return "Monday";
+		case 2: return "Tuesday";
+		case 3: return "Wednesday";
+		case 4: return "Thursday";
+		case 5: return "Friday";
+		case 6: return "Saturday";
+		default: return "Day";
+	}
+}
+
+static char *month(int month)
+{
+	switch(month)
+	{
+		case 0: return "January";
+		case 1: return "February";
+		case 2: return "March";
+		case 3: return "April";
+		case 4: return "May";
+		case 5: return "June";
+		case 6: return "July";
+		case 7: return "August";
+		case 8: return "September";
+		case 9: return "October";
+		case 10: return "November";
+		case 11: return "December";
+		default: return "Month";
+	}
+}
+
+char *cur_time(char *buf)
 {
 	time_t rawtime;
-	struct tm * timeinfo;
+	struct tm *timeinfo;
 	time (&rawtime);
 	timeinfo = localtime(&rawtime);
-	char *cur_time = asctime(timeinfo);
-	cur_time[strlen(cur_time)-1] = '\0';
-	return cur_time;
+	// char *cur_time = asctime(timeinfo);
+	// cur_time[strlen(cur_time)-1] = '\0';
+
+    struct timespec spec;
+
+    clock_gettime(CLOCK_REALTIME, &spec);
+
+    sprintf(buf, "%02d:%02d:%02d:%06ld %s, %02d %s %d", timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec, spec.tv_nsec/1000, weekday(timeinfo->tm_wday), timeinfo->tm_mday, month(timeinfo->tm_mon), timeinfo->tm_year + 1900);
+
+	return buf;
 }
 
 void nrf_print_error(const char *msg)
 {
-	printf("\033[31;1m(NRF)\033[0m\033[31m[%s]\033[31;1m   Error:\033[0m \033[31m%s\033[0m\n", cur_time(), msg);
+	char *buf = malloc(64);
+	printf("\033[31;1m(NRF)\033[0m\033[31m[%s]\033[31;1m   Error:\033[0m \033[31m%s\033[0m\n", cur_time(buf), msg);
+	free(buf);
 }
 
 void nrf_print_warning(const char *msg)
 {
-	printf("\033[33;1m(NRF)\033[0m\033[33m[%s]\033[33;1m Warning:\033[0m \033[33m%s\033[0m\n", cur_time(), msg);
+	char *buf = malloc(64);
+	printf("\033[33;1m(NRF)\033[0m\033[33m[%s]\033[33;1m Warning:\033[0m \033[33m%s\033[0m\n", cur_time(buf), msg);
+	free(buf);
 }
 
 void nrf_print_note(const char *msg)
 {
-	printf("\033[34;1m(NRF)\033[0m\033[34m[%s]\033[34;1m    Note:\033[0m \033[34m%s\033[0m\n", cur_time(), msg);
+	char *buf = malloc(64);
+	printf("\033[34;1m(NRF)\033[0m\033[34m[%s]\033[34;1m    Note:\033[0m \033[34m%s\033[0m\n", cur_time(buf), msg);
+	free(buf);
 }
 
 void nrf_print_success(const char *msg)
 {
-	printf("\033[32;1m(NRF)\033[0m\033[32m[%s]\033[32;1m Success:\033[0m \033[32m%s\033[0m\n", cur_time(), msg);
+	char *buf = malloc(64);
+	printf("\033[32;1m(NRF)\033[0m\033[32m[%s]\033[32;1m Success:\033[0m \033[32m%s\033[0m\n", cur_time(buf), msg);
+	free(buf);
 }
 
 void nrf_print_info(const char *msg)
 {
-	printf("\033[36;1m(NRF)\033[0m\033[36m[%s]\033[36;1m    Info:\033[0m \033[36m%s\033[0m\n", cur_time(), msg);
+	char *buf = malloc(64);
+	printf("\033[36;1m(NRF)\033[0m\033[36m[%s]\033[36;1m    Info:\033[0m \033[36m%s\033[0m\n", cur_time(buf), msg);
+	free(buf);
+}
+
+void nrf_print_value(const char *msg)
+{
+	char *buf = malloc(64);
+	printf("\033[35;1m(NRF)\033[0m\033[35m[%s]\033[35;1m   Value:\033[0m \033[35m%s\033[0m\n", cur_time(buf), msg);
+	free(buf);
 }
 
 void nrf_print_struct(void *structure, char *name, int mode, int fd)
@@ -159,4 +218,33 @@ void nrf_print_struct(void *structure, char *name, int mode, int fd)
 		print_stat((struct stat *)structure, mode, fd);
 	else if (strcmp(name, "dirent") == 0)
 		print_dirent((struct dirent *)structure, mode, fd);
+}
+
+void dumphex(const void* data, size_t size) {
+	char ascii[17];
+	size_t i, j;
+	ascii[16] = '\0';
+	for (i = 0; i < size; ++i) {
+		printf("%02X ", ((unsigned char*)data)[i]);
+		if (((unsigned char*)data)[i] >= ' ' && ((unsigned char*)data)[i] <= '~') {
+			ascii[i % 16] = ((unsigned char*)data)[i];
+		} else {
+			ascii[i % 16] = '.';
+		}
+		if ((i+1) % 8 == 0 || i+1 == size) {
+			printf(" ");
+			if ((i+1) % 16 == 0) {
+				printf("|  %s \n", ascii);
+			} else if (i+1 == size) {
+				ascii[(i+1) % 16] = '\0';
+				if ((i+1) % 16 <= 8) {
+					printf(" ");
+				}
+				for (j = (i+1) % 16; j < 16; ++j) {
+					printf("   ");
+				}
+				printf("|  %s \n", ascii);
+			}
+		}
+	}
 }
