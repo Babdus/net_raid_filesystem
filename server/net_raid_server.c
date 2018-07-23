@@ -362,6 +362,63 @@ int call_raid_1_function(int client_fd, char *buf)
 
 		return 0;
 	}
+	else if (strcmp(buf, "pwrite") == 0)
+	{
+		int fd;
+		size_t size;
+		off_t offset;
+		memcpy(&fd, buf + 7, sizeof(int));
+		memcpy(&size, buf + 7 + sizeof(int), sizeof(size_t));
+		memcpy(&offset, buf + 7 + sizeof(int) + sizeof(size_t), sizeof(off_t));
+
+		print4siii(buf, fd, size, offset);
+
+		buf--;
+		char *write_buf = malloc(size);
+		char *wb_p = write_buf;
+
+		printf("after malloc\n");
+
+		// sleep(1);
+
+		int int_size = (int)size;
+
+		while (int_size > 0)
+		{
+			int read_size = BUF_SIZE;
+			if (int_size < BUF_SIZE) read_size = size;
+
+			printf("read_size: %d\n", read_size);
+
+			read(client_fd, buf, read_size);
+			while (strlen(buf) < 1)
+				read(client_fd, buf, read_size);
+
+			printf("buf: %s\n", buf);
+
+			memcpy(wb_p, buf, read_size);
+
+			printf("wb_p: %s\n", wb_p);
+
+			wb_p += BUF_SIZE;
+
+			printf("end\n");
+
+			int_size -= BUF_SIZE;
+
+			printf("size: %d\n", int_size);
+		}
+
+		printf("after loop\n");
+
+		int rv = pwrite(fd, write_buf, size, offset);
+
+		printf("after pwrite\n");
+
+		memcpy(buf, &rv, sizeof(int));
+		memcpy(buf + sizeof(int), &errno, sizeof(int));
+		return sizeof(int) * 2;
+	}
 	else if (strcmp(buf, "close") == 0)
 	{
 		int fd;

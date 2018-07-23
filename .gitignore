@@ -1,0 +1,3 @@
+*.o
+net_raid_client
+net_raid_server
