@@ -4,6 +4,7 @@
 #include <errno.h>
 
 #include <sys/types.h>
+#include <sys/xattr.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -19,6 +20,8 @@
 #define BACKLOG 10
 #define PATH_LEN 256
 #define BUF_SIZE 1024
+#define HASH_SIZE 16
+#define FILE_DAMAGED -93
 
 char *global_path;
 
@@ -68,6 +71,111 @@ static void print3(const char *syscall, const char *from, const char *to)
 	sprintf(info_msg, "raid_1_%s: From %s to %s", syscall, from, to);
 	nrf_print_info(info_msg);
 	free(info_msg);
+}
+
+int hash_file(char *buf, int fd, int size)
+{
+	memset(buf, 0, HASH_SIZE);
+
+	printf("checksum at begining: ");
+	int j = 0;
+	for (;j < HASH_SIZE; j++)
+		printf("%0x ", buf[j]);
+	printf("\n");
+
+	int offset = 0;
+	char *temp_buf = malloc(HASH_SIZE);
+	int rv;
+	while (size >= HASH_SIZE)
+	{
+		rv = pread(fd, temp_buf, HASH_SIZE, offset);
+
+		printf("mid, temp: %.16s\n", temp_buf);
+		printf("temp at mid: ");
+		j = 0;
+		for (;j < HASH_SIZE; j++)
+			printf("%0x ", temp_buf[j]);
+		printf("\n");
+		printf("rv %d\n", rv);
+
+		printf("%s\n", strerror(errno));
+
+		size -= HASH_SIZE;
+		offset += HASH_SIZE;
+		int i = 0;
+		for (; i < HASH_SIZE; i++)
+			buf[i] ^= temp_buf[i];
+
+		printf("checksum at mid: ");
+		j = 0;
+		for (;j < HASH_SIZE; j++)
+			printf("%0x ", buf[j]);
+		printf("\n");
+	}
+
+	printf("checksum before end: ");
+	j = 0;
+	for (;j < HASH_SIZE; j++)
+		printf("%0x ", buf[j]);
+	printf("\n");
+
+	rv = pread(fd, temp_buf, size, offset);
+	int i = 0;
+	for (; i < size; i++)
+		buf[i] ^= temp_buf[i];
+
+	printf("checksum in the end: ");
+	j = 0;
+	for (;j < HASH_SIZE; j++)
+		printf("%0x ", buf[j]);
+	printf("\n");
+
+	free(temp_buf);
+	return rv;
+}
+
+int check_file(const char *path)
+{
+	struct stat st;
+	stat(path, &st);
+	int size = st.st_size;
+
+	if (size == 0) return 0;
+
+	char *checksum = malloc(HASH_SIZE);
+	int xattr = lgetxattr(path, "checksum", checksum, HASH_SIZE);
+
+	if (xattr < 0) printf("error: %s\n", strerror(errno));
+
+	printf("checksum: ");
+	int i = 0;
+	for (;i < HASH_SIZE; i++)
+		printf("%0x ", checksum[i]);
+	printf("\n");
+
+	
+
+	printf("file size: %d\n", size);
+
+	int fd = open(path, O_RDONLY);
+	char *new_checksum = malloc(HASH_SIZE);
+	hash_file(new_checksum, fd, size);
+	close(fd);
+
+	printf("new checksum: ");
+	i = 0;
+	for (;i < HASH_SIZE; i++)
+		printf("%0x ", new_checksum[i]);
+	printf("\n");
+	
+	int cmp = memcmp(checksum, new_checksum, HASH_SIZE);
+
+	printf("cmp: %d\n", cmp);
+
+	free(checksum);
+	free(new_checksum);
+	if (cmp == 0) return 0;
+	else return -1;
 }
 
 int call_raid_1_function(int client_fd, char *buf)
@@ -254,6 +362,8 @@ int call_raid_1_function(int client_fd, char *buf)
 
 		int rv = open(path, flags, mode);
 
+		// if (rv >= 0 && check_file(path) < 0) rv = FILE_DAMAGED;
+
 		print2i(buf, rv);
 
 		free(path);
@@ -364,12 +474,20 @@ int call_raid_1_function(int client_fd, char *buf)
 	}
 	else if (strcmp(buf, "pwrite") == 0)
 	{
+		char *path = malloc(PATH_LEN);
+		path[0] = '\0';
+
+		strcat(path, global_path);
+		strcat(path, buf + 7);
+
+		print2(buf, path);
+
 		int fd;
 		size_t size;
 		off_t offset;
-		memcpy(&fd, buf + 7, sizeof(int));
-		memcpy(&size, buf + 7 + sizeof(int), sizeof(size_t));
-		memcpy(&offset, buf + 7 + sizeof(int) + sizeof(size_t), sizeof(off_t));
+		memcpy(&fd, buf + 8 + strlen(buf + 7), sizeof(int));
+		memcpy(&size, buf + 8 + strlen(buf + 7) + sizeof(int), sizeof(size_t));
+		memcpy(&offset, buf + 8 + strlen(buf + 7) + sizeof(int) + sizeof(size_t), sizeof(off_t));
 
 		print4siii(buf, fd, size, offset);
 
@@ -377,43 +495,61 @@ int call_raid_1_function(int client_fd, char *buf)
 		char *write_buf = malloc(size);
 		char *wb_p = write_buf;
 
-		printf("after malloc\n");
-
-		// sleep(1);
-
 		int int_size = (int)size;
 
 		while (int_size > 0)
 		{
 			int read_size = BUF_SIZE;
 			if (int_size < BUF_SIZE) read_size = size;
-
-			printf("read_size: %d\n", read_size);
-
 			read(client_fd, buf, read_size);
 			while (strlen(buf) < 1)
 				read(client_fd, buf, read_size);
-
-			printf("buf: %s\n", buf);
-
 			memcpy(wb_p, buf, read_size);
-
-			printf("wb_p: %s\n", wb_p);
-
 			wb_p += BUF_SIZE;
-
-			printf("end\n");
-
 			int_size -= BUF_SIZE;
-
-			printf("size: %d\n", int_size);
 		}
-
-		printf("after loop\n");
 
 		int rv = pwrite(fd, write_buf, size, offset);
 
-		printf("after pwrite\n");
+		// struct stat st;
+		// fstat(fd, &st);
+		// int file_size = st.st_size;
+
+		// printf("file_size %d\n", file_size);
+
+		// int read_fd = open(path, O_RDONLY);
+		// char *checksum = malloc(HASH_SIZE);
+		// hash_file(checksum, read_fd, file_size);
+		// close(read_fd);
+		
+		// printf("checksum: ");
+		// int i = 0;
+		// for (;i < HASH_SIZE; i++)
+		// 	printf("%x ", checksum[i]);
+		// printf("\n");
+
+		// int xattr = fsetxattr(fd, "checksum", checksum, HASH_SIZE, 0);
+
+		// if (xattr < 0) printf("error: %s\n", strerror(errno));
+
+		memcpy(buf, &rv, sizeof(int));
+		memcpy(buf + sizeof(int), &errno, sizeof(int));
+		return sizeof(int) * 2;
+	}
+	else if (strcmp(buf, "truncate") == 0)
+	{
+		char *path = malloc(PATH_LEN);
+		path[0] = '\0';
+
+		strcat(path, global_path);
+		strcat(path, buf + 9);
+
+		print2(buf, path);
+
+		off_t size;
+		memcpy(&size, buf + 10 + strlen(buf + 9), sizeof(off_t));
+
+		int rv = truncate(path, size);
 
 		memcpy(buf, &rv, sizeof(int));
 		memcpy(buf + sizeof(int), &errno, sizeof(int));

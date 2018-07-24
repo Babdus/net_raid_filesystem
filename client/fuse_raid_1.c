@@ -3,6 +3,10 @@
 #define SET 34
 #define GET 43
 
+#define OPEN_FILES_NUM 64
+#define FILE_DAMAGED -93
+#define UNOPENED -102
+
 struct storage *global_storage;
 
 FILE *err_file;
@@ -17,7 +21,7 @@ struct open_file {
 	int n;
 };
 
-struct open_file *open_files[64];
+struct open_file *open_files[OPEN_FILES_NUM];
 
 static void print2(const char *syscall, const char *path)
 {
@@ -78,7 +82,7 @@ static void print_open_files()
 {
 	int i = 0;
 	int null_count = 0;
-	for (; i < 64; i++)
+	for (; i < OPEN_FILES_NUM; i++)
 	{
 		if (open_files[i] != NULL)
 		{
@@ -96,7 +100,7 @@ static void print_open_files()
 static void init_open_files()
 {
 	int i = 0;
-	for (; i < 64; i++)
+	for (; i < OPEN_FILES_NUM; i++)
 		open_files[i] = NULL;
 }
 
@@ -109,7 +113,7 @@ static struct open_file *find_fd(const char *path)
 	return NULL;
 }
 
-static void add_open_file(const char *path, int fd_1, int fd_2)
+static struct open_file *add_open_file(const char *path, int fd_1, int fd_2)
 {
 	struct open_file *of = malloc(sizeof(struct open_file));
 	of->path = strdup(path);
@@ -119,6 +123,12 @@ static void add_open_file(const char *path, int fd_1, int fd_2)
 	while (open_files[i] != NULL) i++;
 	open_files[i] = of;
 	of->n = i;
+	return of;
+}
+
+static void copy_file(struct open_file *of, int dest, int source)
+{
+	return;
 }
 
 /* 
@@ -183,9 +193,10 @@ static struct dirent *readdir_on_server(DIR *dir);
 static int closedir_on_server(DIR *dir);
 static int rmdir_on_server(const char *path);
 
-static int open_on_server(const char *path, int flags, mode_t mode);
+static struct open_file *open_on_server(const char *path, int flags, mode_t mode);
 static int pread_on_server(int open_fd, char *read_buf, size_t size, off_t offset, int server);
-static int pwrite_on_server(struct open_file *of, const char *write_buf, size_t size, off_t offset);
+static int pwrite_on_server(const char *path, struct open_file *of, const char *write_buf, size_t size, off_t offset);
+static int truncate_on_server(const char *path, off_t size);
 static int close_on_server(int close_fd, int server);
 static int rename_on_server(const char *from, const char *to);
 static int unlink_on_server(const char *path);
@@ -389,7 +400,7 @@ static int rmdir_on_server(const char *path)
 	return rv;
 }
 
-static int open_on_server(const char *path, int flags, mode_t mode)
+static struct open_file *open_on_server(const char *path, int flags, mode_t mode)
 {
 	char buf[1024];
 	sprintf(buf, "1%s", "open");
@@ -399,87 +410,63 @@ static int open_on_server(const char *path, int flags, mode_t mode)
 	int status;
 	int rv = 0;
 
+	struct open_file *of;
+
 	// If open is required on both servers
 	if (flags & O_CREAT || flags & O_WRONLY)
 	{
 		int fd_1, fd_2;
 		status = send_to_server(buf, 7 + strlen(path) + sizeof(int) + sizeof(mode_t), SET);
-		if (status != 0) return -1;
+		if (status != 0) return NULL;
 
 		int status_1 = read(server_fd_1, buf, sizeof(int) * 2);
 		int status_2 = read(server_fd_2, buf + sizeof(int) * 2, sizeof(int) * 2);
 
 		// If neither of servers is active
-		if (status_1 < 0 && status_2 < 0) return -1;
+		if (status_1 < 0 && status_2 < 0) return NULL;
+
+		if (status_1 > -1) memcpy(&fd_1, buf, sizeof(int));
+		if (status_2 > -1) memcpy(&fd_2, buf + sizeof(int) * 2, sizeof(int));
 
 		// If first server is dead we need to close recently opened file on server two.
 		if (status_1 < 0)
 		{
-			memcpy(&fd_2, buf + sizeof(int) * 2, sizeof(int));
-			
 			// If open was unsuccessful
-			if (fd_2 < 0)
-			{
-				memcpy(&errno, buf + sizeof(int) * 3, sizeof(int));
-				return -1;
-			}
-			close_on_server(fd_2, 2);
-			return -1;			
+			if (fd_2 < 0) memcpy(&errno, buf + sizeof(int) * 3, sizeof(int));
+			else close_on_server(fd_2, 2);
+			return NULL;
 		}
 
 		// If second server is dead we need to close recently opened file on server one.
 		if (status_2 < 0)
 		{
-			memcpy(&fd_1, buf, sizeof(int));
-			
-			// If open was unsuccessful
-			if (fd_1 < 0)
-			{
-				memcpy(&errno, buf + sizeof(int), sizeof(int));
-				return -1;
-			}
-			close_on_server(fd_1, 1);
-			return -1;
+			if (fd_1 < 0) memcpy(&errno, buf + sizeof(int), sizeof(int));
+			else close_on_server(fd_1, 1);
+			return NULL;
 		}
 
-		memcpy(&fd_1, buf, sizeof(int));
-		memcpy(&fd_2, buf + sizeof(int) * 2, sizeof(int));
+		if (fd_1 < 0) memcpy(&errno, buf + sizeof(int), sizeof(int));
+		if (fd_2 < 0) memcpy(&errno, buf + sizeof(int) * 3, sizeof(int));
 
-		if (fd_1 < 0)
-		{
-			memcpy(&errno, buf + sizeof(int), sizeof(int));
-			return -1;
-		}
-
-		if (fd_2 < 0)
-		{
-			memcpy(&errno, buf + sizeof(int) * 3, sizeof(int));
-			return -1;
-		}
-
-		add_open_file(path, fd_1, fd_2);
+		of = add_open_file(path, fd_1, fd_2);
 	}
 	else
 	{
 		status = send_to_server(buf, 7 + strlen(path) + sizeof(int) + sizeof(mode_t), GET);
-		if (status == -1) return -1;
+		if (status == -1) return NULL;
 		int fd;
 		if (status == 2) fd = server_fd_2;
 		else fd = server_fd_1;
-		if (read(fd, buf, sizeof(int) * 2) == -1) return -1;
+		if (read(fd, buf, sizeof(int) * 2) == -1) return NULL;
 		
 		memcpy(&rv, buf, sizeof(int));
-		if (rv < 0) 
-		{
-			memcpy(&errno, buf + sizeof(int), sizeof(int));
-			return -1;
-		}
+		if (rv < 0) memcpy(&errno, buf + sizeof(int), sizeof(int));
 
-		if (status == 2) add_open_file(path, -1, rv);
-		else add_open_file(path, rv, -1);
+		if (status == 2) of = add_open_file(path, UNOPENED, rv);
+		else of = add_open_file(path, rv, UNOPENED);
 	}
 
-	return rv;
+	return of;
 }
 
 static int pread_on_server(int open_fd, char *read_buf, size_t size, off_t offset, int server)
@@ -516,20 +503,21 @@ static int pread_on_server(int open_fd, char *read_buf, size_t size, off_t offse
 	return rv;
 }
 
-static int pwrite_on_server(struct open_file *of, const char *write_buf, size_t size, off_t offset)
+static int pwrite_on_server(const char *path, struct open_file *of, const char *write_buf, size_t size, off_t offset)
 {
 	char buf[1024];
 	sprintf(buf, "1%s", "pwrite");
-	memcpy(buf + 8, &of->fd_1, sizeof(int));
-	memcpy(buf + 8 + sizeof(int), &size, sizeof(size_t));
-	memcpy(buf + 8 + sizeof(int) + sizeof(size_t), &offset, sizeof(off_t));
+	memcpy(buf + 8, path, strlen(path) + 1);
+	memcpy(buf + 9 + strlen(path), &of->fd_1, sizeof(int));
+	memcpy(buf + 9 + strlen(path) + sizeof(int), &size, sizeof(size_t));
+	memcpy(buf + 9 + strlen(path) + sizeof(int) + sizeof(size_t), &offset, sizeof(off_t));
 
-	int status_1 = send_to_server(buf, 8 + sizeof(int) + sizeof(size_t) + sizeof(off_t), 1);
+	int status_1 = send_to_server(buf, 9 + strlen(path) + sizeof(int) + sizeof(size_t) + sizeof(off_t), 1);
 
 	if(status_1 < 0) return -1;
 
-	memcpy(buf + 8, &of->fd_2, sizeof(int));
-	int status_2 = send_to_server(buf, 8 + sizeof(int) + sizeof(size_t) + sizeof(off_t), 2);
+	memcpy(buf + 9 + strlen(path), &of->fd_2, sizeof(int));
+	int status_2 = send_to_server(buf, 9 + strlen(path) + sizeof(int) + sizeof(size_t) + sizeof(off_t), 2);
 
 	if(status_2 < 0) return -1;
 
@@ -564,6 +552,28 @@ static int pwrite_on_server(struct open_file *of, const char *write_buf, size_t 
 	}
 
 	return rv_1;
+}
+
+static int truncate_on_server(const char *path, off_t size)
+{
+	char buf[1024];
+	sprintf(buf, "1%s", "truncate");
+	memcpy(buf + 10, path, strlen(path) + 1);
+	memcpy(buf + 11 + strlen(path), &size, sizeof(off_t));
+	int status = send_to_server(buf, strlen(path) + 11 + sizeof(off_t), SET);
+
+	if (status != 0) return -1;
+
+	int status_1 = read(server_fd_1, buf, sizeof(int) * 2);
+	int status_2 = read(server_fd_2, buf, sizeof(int) * 2);
+
+	if (status_1 < 0 || status_2 < 0) return -1;
+
+	int rv;
+	memcpy(&rv, buf, sizeof(int));
+	memcpy(&errno, buf + sizeof(int), sizeof(int));
+
+	return rv;
 }
 
 static int close_on_server(int close_fd, int server)
@@ -641,6 +651,7 @@ static int raid_1_create(const char *path, mode_t mode, struct fuse_file_info *f
 static int raid_1_open(const char *path, struct fuse_file_info *fi);
 static int raid_1_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
 static int raid_1_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi);
+static int raid_1_truncate(const char *path, off_t size);
 static int raid_1_release(const char *path, struct fuse_file_info *fi);
 static int raid_1_rename(const char *from, const char *to);
 static int raid_1_unlink(const char *path);
@@ -712,19 +723,42 @@ static int raid_1_rmdir(const char *path)
 static int raid_1_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 {
 	print2("create", path);
-	if (open_on_server(path, fi->flags, mode) == -1) return -errno;
-	return 0;
+	struct open_file *of = open_on_server(path, fi->flags, mode);
+	if (of == NULL) return -errno;
+
+	print_open_files();
+
+	if (of->fd_1 >= 0 && of->fd_2 >= 0) return 0;
+	if (of->fd_1 == FILE_DAMAGED && of->fd_2 != FILE_DAMAGED) copy_file(of, 1, 2);
+	else if (of->fd_1 != FILE_DAMAGED && of->fd_2 == FILE_DAMAGED) copy_file(of, 2, 1);
+	else if (of->fd_1 == FILE_DAMAGED && of->fd_2 == FILE_DAMAGED) return -EBADFD;
+	else return -errno;
+	raid_1_release(path, fi);
+	return raid_1_create(path, mode, fi);
 }
 
 static int raid_1_open(const char *path, struct fuse_file_info *fi)
 {
 	print2("open", path);
-	if (open_on_server(path, fi->flags, 0000) == -1) return -errno;
-	printf("hmm\n");
+	struct open_file *of = open_on_server(path, fi->flags, 0000);
+	if (of == NULL) return -errno;
 
 	print_open_files();
 
-	return 0;
+	if (of->fd_1 >= 0 && of->fd_2 >= 0) return 0;
+	if (of->fd_1 >= 0 && of->fd_2 == UNOPENED) return 0;
+	if (of->fd_1 == UNOPENED && of->fd_2 >= 0) return 0;
+	if ((of->fd_1 == UNOPENED || of->fd_2 == UNOPENED) && (of->fd_1 == FILE_DAMAGED || of->fd_2 == FILE_DAMAGED))
+	{
+		raid_1_release(path, fi);
+		of = open_on_server(path, fi->flags | O_WRONLY, 0000);
+	}		
+	if (of->fd_1 == FILE_DAMAGED && of->fd_2 != FILE_DAMAGED) copy_file(of, 1, 2);
+	else if (of->fd_1 != FILE_DAMAGED && of->fd_2 == FILE_DAMAGED) copy_file(of, 2, 1);
+	else if (of->fd_1 == FILE_DAMAGED && of->fd_2 == FILE_DAMAGED) return -EBADFD;
+	else return -errno;
+	raid_1_release(path, fi);
+	return raid_1_open(path, fi);
 }
 
 static int raid_1_read(const char *path, char *buf, size_t size, off_t offset,
@@ -779,12 +813,18 @@ static int raid_1_write(const char *path, const char *buf, size_t size,
 	// fd = open_on_server(path, O_WRONLY, 0000);
 	// if (fd == -1) return -errno;
 
-	res = pwrite_on_server(of, buf, size, offset);
-	if (res == -1)
-		res = -errno;
+	res = pwrite_on_server(path, of, buf, size, offset);
+	if (res == -1) res = -errno;
 
 	// close_on_server(fd);
 	return res;
+}
+
+static int raid_1_truncate(const char *path, off_t size)
+{
+	print2("truncate", path);
+	if (truncate_on_server(path, size) == -1) return -errno;
+	return 0;
 }
 
 static int raid_1_release(const char *path, struct fuse_file_info *fi)
@@ -798,8 +838,8 @@ static int raid_1_release(const char *path, struct fuse_file_info *fi)
 	
 	int res_1 = 0;
 	int res_2 = 0;
-	if (of->fd_1 >= 0) res_1 = close_on_server(of->fd_1, 1);
-	if (of->fd_2 >= 0) res_2 = close_on_server(of->fd_2, 2);
+	if (of->fd_1 != UNOPENED) res_1 = close_on_server(of->fd_1, 1);
+	if (of->fd_2 != UNOPENED) res_2 = close_on_server(of->fd_2, 2);
 	if (res_1 == -1 || res_2 == -1) return -errno;
 
 	free(of->path);
@@ -872,19 +912,6 @@ static int raid_1_chown(const char *path, uid_t uid, gid_t gid)
 	// int res;
 
 	// res = lchown(path, uid, gid);
-	// if (res == -1)
-	// 	return -errno;
-
-	return 0;
-}
-
-static int raid_1_truncate(const char *path, off_t size)
-{
-	print2("truncate", path);
-
-	// int res;
-
-	// res = truncate(path, size);
 	// if (res == -1)
 	// 	return -errno;
 
