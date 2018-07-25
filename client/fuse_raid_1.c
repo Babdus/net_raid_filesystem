@@ -128,7 +128,7 @@ static struct open_file *add_open_file(const char *path, int fd_1, int fd_2)
 
 static void copy_file(struct open_file *of, int dest, int source)
 {
-	return;
+	nrf_print_warning("Copy is needed");
 }
 
 /* 
