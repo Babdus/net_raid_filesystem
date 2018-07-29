@@ -216,13 +216,13 @@ static int lstat_on_server(const char *path, struct stat *stbuf)
 	if (status == 2) fd = server_fd_2;
 	else fd = server_fd_1;
 
-	if (read(fd, buf, sizeof(struct stat) + sizeof(int) + sizeof(int)) == -1) return -1;
-
-	memcpy(stbuf, buf, sizeof(struct stat));
+	int read_size = sizeof(struct stat) + sizeof(int) + sizeof(int);
+	if (read(fd, buf, read_size) != read_size) return -1;
 
 	int rv;
-	memcpy(&rv, buf + sizeof(struct stat), sizeof(int));
-	memcpy(&errno, buf + sizeof(struct stat) + sizeof(int), sizeof(int));
+	memcpy(&rv, buf, sizeof(int));
+	memcpy(&errno, buf + sizeof(int), sizeof(int));
+	memcpy(stbuf, buf + sizeof(int) * 2, sizeof(struct stat));
 
 	return rv;
 }
@@ -241,7 +241,8 @@ static int access_on_server(const char *path, int mask)
 	if (status == 2) fd = server_fd_2;
 	else fd = server_fd_1;
 
-	if (read(fd, buf, sizeof(int) + sizeof(int)) == -1) return -1;
+	int read_size = sizeof(int) + sizeof(int);
+	if (read(fd, buf, read_size) != read_size) return -1;
 
 	int rv;
 	memcpy(&rv, buf, sizeof(int));
@@ -264,7 +265,7 @@ static int mknod_on_server(const char *path, mode_t mode, dev_t rdev)
 	int status_1 = read(server_fd_1, buf, sizeof(int) * 2);
 	int status_2 = read(server_fd_2, buf, sizeof(int) * 2);
 
-	if (status_1 < 0 || status_2 < 0) return -1;
+	if (status_1 != sizeof(int) * 2 || status_2 != sizeof(int) * 2) return -1;
 
 	int rv;
 	memcpy(&rv, buf, sizeof(int));
@@ -286,7 +287,7 @@ static int mkdir_on_server(const char *path, mode_t mode)
 	int status_1 = read(server_fd_1, buf, sizeof(int) * 2);
 	int status_2 = read(server_fd_2, buf, sizeof(int) * 2);
 
-	if (status_1 < 0 || status_2 < 0) return -1;
+	if (status_1 != sizeof(int) * 2 || status_2 != sizeof(int) * 2) return -1;
 
 	int rv;
 	memcpy(&rv, buf, sizeof(int));
@@ -308,11 +309,14 @@ static DIR *opendir_on_server(const char *path)
 	if (status == 2) fd = server_fd_2;
 	else fd = server_fd_1;
 
-	if (read(fd, buf, sizeof(DIR *) + sizeof(int)) == -1) return NULL;
+	int read_size = sizeof(DIR *) + sizeof(int) * 2;
+	if (read(fd, buf, read_size) != read_size) return NULL;
 
+	int rv;
 	DIR *dir;
-	memcpy(&dir, buf, sizeof(DIR *));
-	memcpy(&errno, buf + sizeof(DIR *), sizeof(int));
+	memcpy(&rv, buf, sizeof(int));
+	memcpy(&errno, buf + sizeof(int), sizeof(int));
+	memcpy(&dir, buf + sizeof(int) * 2, sizeof(DIR *));
 
 	// err_file = fopen(global_config->err_log_path, "a");
 	// fprintf(err_file, "opendir_on_server: Dir: %p\n", dir);
@@ -337,17 +341,19 @@ static struct dirent *readdir_on_server(DIR *dir)
 	if (status == 2) fd = server_fd_2;
 	else fd = server_fd_1;
 
-	if (read(fd, buf, sizeof(struct dirent) + sizeof(int)) == -1) return NULL;
+	int read_size = sizeof(struct dirent) + sizeof(int) * 2;
+	if (read(fd, buf, read_size) != read_size) return NULL;
 
-	if (strcmp(buf, "NULL") == 0) 
+	int rv;
+	memcpy(&rv, buf, sizeof(int));
+	if (rv == -1) 
 	{
-		memcpy(&errno, buf + 5, sizeof(int));
+		memcpy(&errno, buf + sizeof(int), sizeof(int));
 		return NULL;
 	}
 
 	struct dirent *entry = malloc(sizeof(struct dirent));
-	memcpy(entry, buf, sizeof(struct dirent));
-	memcpy(&errno, buf + sizeof(struct dirent), sizeof(int));
+	memcpy(entry, buf + sizeof(int) * 2, sizeof(struct dirent));
 
 	// fprintf(err_file, "readdir_on_server: Entry { d_ino: %zu, d_type: %d, d_name: %s }\n", entry->d_ino, entry->d_type, entry->d_name);
 	// fclose(err_file);
@@ -372,7 +378,8 @@ static int closedir_on_server(DIR *dir)
 	if (status == 2) fd = server_fd_2;
 	else fd = server_fd_1;
 
-	if (read(fd, buf, sizeof(int)) == -1) return -1;
+	int read_size = sizeof(int);
+	if (read(fd, buf, sizeof(int)) != read_size) return -1;
 
 	memcpy(&errno, buf, sizeof(int));
 
@@ -391,7 +398,7 @@ static int rmdir_on_server(const char *path)
 	int status_1 = read(server_fd_1, buf, sizeof(int) * 2);
 	int status_2 = read(server_fd_2, buf, sizeof(int) * 2);
 
-	if (status_1 < 0 || status_2 < 0) return -1;
+	if (status_1 != sizeof(int) * 2 || status_2 != sizeof(int) * 2) return -1;
 
 	int rv;
 	memcpy(&rv, buf, sizeof(int));
@@ -423,13 +430,13 @@ static struct open_file *open_on_server(const char *path, int flags, mode_t mode
 		int status_2 = read(server_fd_2, buf + sizeof(int) * 2, sizeof(int) * 2);
 
 		// If neither of servers is active
-		if (status_1 < 0 && status_2 < 0) return NULL;
+		if (status_1 <= 0 && status_2 <= 0) return NULL;
 
-		if (status_1 > -1) memcpy(&fd_1, buf, sizeof(int));
-		if (status_2 > -1) memcpy(&fd_2, buf + sizeof(int) * 2, sizeof(int));
+		if (status_1 >= sizeof(int)) memcpy(&fd_1, buf, sizeof(int));
+		if (status_2 >= sizeof(int)) memcpy(&fd_2, buf + sizeof(int) * 2, sizeof(int));
 
 		// If first server is dead we need to close recently opened file on server two.
-		if (status_1 < 0)
+		if (status_1 <= 0)
 		{
 			// If open was unsuccessful
 			if (fd_2 < 0) memcpy(&errno, buf + sizeof(int) * 3, sizeof(int));
@@ -438,7 +445,7 @@ static struct open_file *open_on_server(const char *path, int flags, mode_t mode
 		}
 
 		// If second server is dead we need to close recently opened file on server one.
-		if (status_2 < 0)
+		if (status_2 <= 0)
 		{
 			if (fd_1 < 0) memcpy(&errno, buf + sizeof(int), sizeof(int));
 			else close_on_server(fd_1, 1);
@@ -457,7 +464,9 @@ static struct open_file *open_on_server(const char *path, int flags, mode_t mode
 		int fd;
 		if (status == 2) fd = server_fd_2;
 		else fd = server_fd_1;
-		if (read(fd, buf, sizeof(int) * 2) == -1) return NULL;
+
+		int read_size = sizeof(int) * 2;
+		if (read(fd, buf, read_size) != read_size) return NULL;
 		
 		memcpy(&rv, buf, sizeof(int));
 		if (rv < 0) memcpy(&errno, buf + sizeof(int), sizeof(int));
@@ -486,7 +495,8 @@ static int pread_on_server(int open_fd, char *read_buf, size_t size, off_t offse
 	if (status == 2) fd = server_fd_2;
 	else fd = server_fd_1;
 
-	if (read(fd, buf, sizeof(int) * 2) == -1) return -1;
+	int read_size = sizeof(int) * 2;
+	if (read(fd, buf, read_size) != read_size) return -1;
 
 	int rv;
 	memcpy(&rv, buf, sizeof(int));
@@ -494,10 +504,11 @@ static int pread_on_server(int open_fd, char *read_buf, size_t size, off_t offse
 	int num = rv;
 	while (num > 0)
 	{
-		read(fd, buf, 1024);
-		num -= 1024;
-		memcpy(read_buf, buf, 1024);
-		read_buf += 1024;
+		int read_size;
+		read_size = read(fd, buf, 1024);
+		num -= read_size;
+		memcpy(read_buf, buf, read_size);
+		read_buf += read_size;
 	}
 
 	return rv;
@@ -539,7 +550,7 @@ static int pwrite_on_server(const char *path, struct open_file *of, const char *
 	status_1 = read(server_fd_1, buf, sizeof(int) * 2);
 	status_2 = read(server_fd_2, buf + sizeof(int) * 2, sizeof(int) * 2);
 
-	if (status_1 < 0 || status_2 < 0) return -1;
+	if (status_1 != sizeof(int) * 2 || status_2 != sizeof(int) * 2) return -1;
 
 	int rv_1, rv_2;
 	memcpy(&rv_1, buf, sizeof(int));
@@ -567,7 +578,7 @@ static int truncate_on_server(const char *path, off_t size)
 	int status_1 = read(server_fd_1, buf, sizeof(int) * 2);
 	int status_2 = read(server_fd_2, buf, sizeof(int) * 2);
 
-	if (status_1 < 0 || status_2 < 0) return -1;
+	if (status_1 != sizeof(int) * 2 || status_2 != sizeof(int) * 2) return -1;
 
 	int rv;
 	memcpy(&rv, buf, sizeof(int));
@@ -589,7 +600,8 @@ static int close_on_server(int close_fd, int server)
 	if (status == 2) fd = server_fd_2;
 	else fd = server_fd_1;
 
-	if (read(fd, buf, sizeof(int)) == -1) return -1;
+	int read_size = sizeof(int);
+	if (read(fd, buf, read_size) != read_size) return -1;
 
 	memcpy(&errno, buf, sizeof(int));
 
@@ -609,7 +621,7 @@ static int rename_on_server(const char *from, const char *to)
 	int status_1 = read(server_fd_1, buf, sizeof(int) * 2);
 	int status_2 = read(server_fd_2, buf, sizeof(int) * 2);
 
-	if (status_1 < 0 || status_2 < 0) return -1;
+	if (status_1 != sizeof(int) * 2 || status_2 != sizeof(int) * 2) return -1;
 
 	int rv;
 	memcpy(&rv, buf, sizeof(int));
@@ -630,7 +642,7 @@ static int unlink_on_server(const char *path)
 	int status_1 = read(server_fd_1, buf, sizeof(int) * 2);
 	int status_2 = read(server_fd_2, buf, sizeof(int) * 2);
 
-	if (status_1 < 0 || status_2 < 0) return -1;
+	if (status_1 != sizeof(int) * 2 || status_2 != sizeof(int) * 2) return -1;
 
 	int rv;
 	memcpy(&rv, buf, sizeof(int));

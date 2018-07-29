@@ -140,6 +140,7 @@ int main (int argc, char **argv)
 		// print_config(config);
 		struct storage *storage = global_config->storages;
 		while (storage != NULL){
+			
 			mount(storage);
 			storage = storage->next_storage;
 		}
