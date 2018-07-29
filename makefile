@@ -2,7 +2,7 @@ CLIENT = net_raid_client
 SERVER = net_raid_server
 LIBS = -lm `pkg-config fuse --cflags --libs`
 CC = gcc
-CFLAGS = -g -Wall -Wextra
+CFLAGS = -static -g -Wall -Wextra
 
 .PHONY: default all clean
 

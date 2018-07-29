@@ -206,6 +206,8 @@ int call_raid_1_function(int client_fd, char *buf)
 		memcpy(buf + sizeof(int), &errno, sizeof(int));
 		memcpy(buf + sizeof(int) * 2, stat, sizeof(struct stat));
 
+		free(stat);
+
 		return sizeof(struct stat) + sizeof(int) * 2;
 	}
 	else if (strcmp(buf, "access") == 0)
@@ -256,7 +258,7 @@ int call_raid_1_function(int client_fd, char *buf)
 		memcpy(buf + sizeof(int), &errno, sizeof(int));
 		memcpy(buf + sizeof(int) * 2, &dir, sizeof(DIR *));
 
-		print2p("opendir", (DIR *)(*(uint64_t *)buf));
+		print2p("opendir", (DIR *)(*(uint64_t *)(buf + sizeof(int) * 2)));
 
 		return sizeof(DIR *) + sizeof(int) * 2;
 	}
@@ -462,6 +464,7 @@ int call_raid_1_function(int client_fd, char *buf)
 
 		print2i(buf, rv);
 		print2(buf, read_buf);
+		printf("size: %d, offset: %d, rv: %d\n", size, offset, rv);
 
 		buf--;
 
@@ -476,8 +479,11 @@ int call_raid_1_function(int client_fd, char *buf)
 			read_buf += BUF_SIZE;
 			rv -= BUF_SIZE;
 
-			write(client_fd, buf, BUF_SIZE);
+			int write_size = write(client_fd, buf, BUF_SIZE);
+			printf("write size: %d, rv: %d\n", write_size, rv);
 		}
+
+		free(read_buf);
 
 		return 0;
 	}
@@ -491,6 +497,8 @@ int call_raid_1_function(int client_fd, char *buf)
 
 		print2(buf, path);
 
+		free(path);
+
 		int fd;
 		size_t size;
 		off_t offset;
@@ -501,11 +509,9 @@ int call_raid_1_function(int client_fd, char *buf)
 		print4siii(buf, fd, size, offset);
 
 		buf--;
-		char *write_buf = malloc(size);
-		char *wb_p = write_buf;
 
 		int int_size = (int)size;
-
+		int rv = 0;
 		while (int_size > 0)
 		{
 			int read_size = BUF_SIZE;
@@ -513,12 +519,13 @@ int call_raid_1_function(int client_fd, char *buf)
 			read(client_fd, buf, read_size);
 			while (strlen(buf) < 1)
 				read(client_fd, buf, read_size);
-			memcpy(wb_p, buf, read_size);
-			wb_p += BUF_SIZE;
+			rv = pwrite(fd, buf, read_size, offset);
+			printf("rv: %d", rv);
+			offset += read_size;
 			int_size -= BUF_SIZE;
+			printf("write read_size: %d\n", read_size);
 		}
 
-		int rv = pwrite(fd, write_buf, size, offset);
 
 		// struct stat st;
 		// fstat(fd, &st);
@@ -559,6 +566,8 @@ int call_raid_1_function(int client_fd, char *buf)
 		memcpy(&size, buf + 10 + strlen(buf + 9), sizeof(off_t));
 
 		int rv = truncate(path, size);
+
+		free(path);
 
 		buf--;
 		memcpy(buf, &rv, sizeof(int));

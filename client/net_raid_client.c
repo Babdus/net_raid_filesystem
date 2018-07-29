@@ -84,9 +84,9 @@ static void mount(struct storage *storage)
 		{
 			nrf_print_error("Mount failed");
 		}
-		// free(argv[0]);
-		// free(argv[1]);
-		// free(argv[2]);
+		free(argv[0]);
+		free(argv[1]);
+		free(argv[2]);
 	}
 	// else if(storage->raid == 5)
 	// {

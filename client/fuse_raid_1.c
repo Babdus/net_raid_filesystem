@@ -34,6 +34,14 @@ static void print2(const char *syscall, const char *path)
 	// fclose(err_file);
 }
 
+static void print2p(const char *syscall, void *pointer)
+{
+	char *info_msg = (char*)malloc(strlen(syscall) + 41);
+	sprintf(info_msg, "raid_1_%s: Pointer is %p", syscall, pointer);
+	nrf_print_info(info_msg);
+	free(info_msg);
+}
+
 static void print3(const char *syscall, const char *from, const char *to)
 {
 	// err_file = fopen(global_config->err_log_path, "a");
@@ -217,7 +225,7 @@ static int lstat_on_server(const char *path, struct stat *stbuf)
 	else fd = server_fd_1;
 
 	int read_size = sizeof(struct stat) + sizeof(int) + sizeof(int);
-	if (read(fd, buf, read_size) != read_size) return -1;
+	if (read(fd, buf, read_size) < 0) return -1;
 
 	int rv;
 	memcpy(&rv, buf, sizeof(int));
@@ -242,7 +250,7 @@ static int access_on_server(const char *path, int mask)
 	else fd = server_fd_1;
 
 	int read_size = sizeof(int) + sizeof(int);
-	if (read(fd, buf, read_size) != read_size) return -1;
+	if (read(fd, buf, read_size) < 0) return -1;
 
 	int rv;
 	memcpy(&rv, buf, sizeof(int));
@@ -310,7 +318,7 @@ static DIR *opendir_on_server(const char *path)
 	else fd = server_fd_1;
 
 	int read_size = sizeof(DIR *) + sizeof(int) * 2;
-	if (read(fd, buf, read_size) != read_size) return NULL;
+	if (read(fd, buf, read_size) < 0) return NULL;
 
 	int rv;
 	DIR *dir;
@@ -330,6 +338,8 @@ static struct dirent *readdir_on_server(DIR *dir)
 	// err_file = fopen(global_config->err_log_path, "a");
 	// fprintf(err_file, "readdir_on_server: Dir: %p\n", dir);
 
+	print2p("readdir_on_server", dir);
+
 	char buf[1024];
 	sprintf(buf, "1%s", "readdir");
 	memcpy(buf + 9, &dir, sizeof(DIR *));
@@ -342,7 +352,7 @@ static struct dirent *readdir_on_server(DIR *dir)
 	else fd = server_fd_1;
 
 	int read_size = sizeof(struct dirent) + sizeof(int) * 2;
-	if (read(fd, buf, read_size) != read_size) return NULL;
+	if (read(fd, buf, read_size) < 0) return NULL;
 
 	int rv;
 	memcpy(&rv, buf, sizeof(int));
@@ -378,8 +388,8 @@ static int closedir_on_server(DIR *dir)
 	if (status == 2) fd = server_fd_2;
 	else fd = server_fd_1;
 
-	int read_size = sizeof(int);
-	if (read(fd, buf, sizeof(int)) != read_size) return -1;
+	int read_size = sizeof(int) * 2;
+	if (read(fd, buf, read_size) < 0) return -1;
 
 	memcpy(&errno, buf, sizeof(int));
 
@@ -435,23 +445,6 @@ static struct open_file *open_on_server(const char *path, int flags, mode_t mode
 		if (status_1 >= sizeof(int)) memcpy(&fd_1, buf, sizeof(int));
 		if (status_2 >= sizeof(int)) memcpy(&fd_2, buf + sizeof(int) * 2, sizeof(int));
 
-		// If first server is dead we need to close recently opened file on server two.
-		if (status_1 <= 0)
-		{
-			// If open was unsuccessful
-			if (fd_2 < 0) memcpy(&errno, buf + sizeof(int) * 3, sizeof(int));
-			else close_on_server(fd_2, 2);
-			return NULL;
-		}
-
-		// If second server is dead we need to close recently opened file on server one.
-		if (status_2 <= 0)
-		{
-			if (fd_1 < 0) memcpy(&errno, buf + sizeof(int), sizeof(int));
-			else close_on_server(fd_1, 1);
-			return NULL;
-		}
-
 		if (fd_1 < 0) memcpy(&errno, buf + sizeof(int), sizeof(int));
 		if (fd_2 < 0) memcpy(&errno, buf + sizeof(int) * 3, sizeof(int));
 
@@ -502,6 +495,9 @@ static int pread_on_server(int open_fd, char *read_buf, size_t size, off_t offse
 	memcpy(&rv, buf, sizeof(int));
 	memcpy(&errno, buf + sizeof(int), sizeof(int));
 	int num = rv;
+
+	printf("num: %d\n", num);
+
 	while (num > 0)
 	{
 		int read_size;
@@ -509,7 +505,10 @@ static int pread_on_server(int open_fd, char *read_buf, size_t size, off_t offse
 		num -= read_size;
 		memcpy(read_buf, buf, read_size);
 		read_buf += read_size;
+		printf("read_size: %d, num: %d\n", read_size, num);
 	}
+
+	printf("end\n");
 
 	return rv;
 }
@@ -535,6 +534,8 @@ static int pwrite_on_server(const char *path, struct open_file *of, const char *
 	int int_size = (int)size;
 	int status;
 
+	printf("int_size: %d\n", int_size);
+
 	while (int_size > 0)
 	{
 		printf("loop start\n");
@@ -544,6 +545,7 @@ static int pwrite_on_server(const char *path, struct open_file *of, const char *
 		int_size -= 1024;
 		status = send_to_server(buf, write_size, SET);
 		if (status != 0) return -1;
+		printf("int_size: %d\n", int_size);
 		printf("loop end\n");
 	}
 
@@ -600,12 +602,14 @@ static int close_on_server(int close_fd, int server)
 	if (status == 2) fd = server_fd_2;
 	else fd = server_fd_1;
 
-	int read_size = sizeof(int);
+	int read_size = sizeof(int) * 2;
 	if (read(fd, buf, read_size) != read_size) return -1;
 
-	memcpy(&errno, buf, sizeof(int));
+	int rv;
+	memcpy(&rv, buf, sizeof(int));
+	memcpy(&errno, buf + sizeof(int), sizeof(int));
 
-	return 0;
+	return rv;
 }
 
 static int rename_on_server(const char *from, const char *to)
@@ -709,6 +713,8 @@ static int raid_1_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 	(void) fi;
 
 	if ((dp = opendir_on_server(path)) == NULL) return -errno;
+
+	print2p("raid_1_readdir", dp);
 
 	while ((de = readdir_on_server(dp)) != NULL)
 	{
