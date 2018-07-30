@@ -51,16 +51,16 @@ static void print3(const char *syscall, const char *from, const char *to)
 	// fclose(err_file);
 }
 
-// static void print2i(const char *syscall, int num)
-// {
-// 	// err_file = fopen(global_config->err_log_path, "a");
-// 	char *info_msg = (char*)malloc(strlen(syscall) + 41);
-// 	sprintf(info_msg, "raid_5_%s: Number is %d", syscall, num);
-// 	// fprintf(err_file, "[%s] %s\n", cur_time(), info_msg);
-// 	nrf_print_value(info_msg);
-// 	free(info_msg);
-// 	// fclose(err_file);
-// }
+static void print2i(const char *syscall, int num)
+{
+	// err_file = fopen(global_config->err_log_path, "a");
+	char *info_msg = (char*)malloc(strlen(syscall) + 41);
+	sprintf(info_msg, "raid_5_%s: Number is %d", syscall, num);
+	// fprintf(err_file, "[%s] %s\n", cur_time(), info_msg);
+	nrf_print_value(info_msg);
+	free(info_msg);
+	// fclose(err_file);
+}
 
 // static void print4cssi(char raid, const char *syscall, const char *text, int num)
 // {
@@ -94,7 +94,7 @@ static void print_open_files()
 		{
 			if (null_count > 0) printf("%d NULLs\n", null_count);
 			null_count = 0;
-			printf("id: %d", i);
+			printf("id: %d\n", i);
 			int j = 0;
 			for(; j < servers_count; j++)
 				printf("fd_%d: %d\n", j, open_files[i]->fds[j]);
@@ -115,6 +115,7 @@ static struct open_file *init_open_file()
 	struct open_file *of = malloc(sizeof(struct open_file));
 	int i = 0;
 	for (; i < servers_count; i++) of->fds[i] = UNOPENED;
+	for (; i < MAX_SERVERS; i++) of->fds[i] = UNSET_FD;
 	of->id = -1;
 	return of;
 }
@@ -129,6 +130,10 @@ static int add_fd(struct open_file *of, int fd, int server_num)
 		of->id = i;
 	}
 	of->fds[server_num] = fd;
+	printf("of: id: %d\n", of->id);
+	int j = 0;
+	for(; j < servers_count; j++)
+		printf("fd_%d: %d\n", j, of->fds[j]);
 	return of->id;
 }
 
@@ -138,12 +143,18 @@ static void remove_fd(struct open_file *of, int server_num)
 	int res = -1;
 	int i = 0;
 	for (; i < MAX_SERVERS; i++)
-		if (!(of->fds[i] == UNSET_FD) || (of->fds[i] == UNOPENED)) res = 0;
+		if (of->fds[i] != UNSET_FD && of->fds[i] != UNOPENED) res = 0;
+
+	printf("\033[33mres in remove fd: %d\033[0m\n", res);
+
 	if (res == -1)
 	{
 		int id = of->id;
+		printf("\033[30mbefore free\033[0m\n");
 		free(open_files[id]);
+		printf("\033[30mafter free\033[0m\n");
 		open_files[id] = NULL;
+		printf("\033[30mafter null\033[0m\n");
 	}
 }
 
@@ -163,8 +174,8 @@ static void hotswap(int server_num)
 static int receive_num(const char *syscall)
 {
 	if (strcmp(syscall, "lstat") == 0) return sizeof(struct stat) + sizeof(int) * 2;
-	if (strcmp(syscall, "opendir") == 0) return sizeof(DIR *) + sizeof(int);
-	if (strcmp(syscall, "readdir") == 0) return sizeof(struct dirent) + sizeof(int);
+	if (strcmp(syscall, "opendir") == 0) return sizeof(DIR *) + sizeof(int) * 2;
+	if (strcmp(syscall, "readdir") == 0) return sizeof(struct dirent) + sizeof(int) * 2;
 	return sizeof(int) * 2;
 }
 
@@ -206,6 +217,7 @@ static int pack_rename(char *buf, const char *from, const char *to)
 	sprintf(buf, "5%s", "rename");
 	memcpy(buf + 8, from, strlen(from) + 1);
 	memcpy(buf + 9 + strlen(from), to, strlen(to) + 1);
+	printf("hjk %d\n", (int)(10 + strlen(from) + strlen(to)));
 	return 10 + strlen(from) + strlen(to);
 }
 
@@ -214,6 +226,14 @@ static int pack_unlink(char *buf, const char *path)
 	sprintf(buf, "5%s", "unlink");
 	memcpy(buf + 8, path, strlen(path) + 1);
 	return strlen(path) + 9;
+}
+
+static int pack_utimes(char *buf, const char *path, struct timeval *tv)
+{
+	sprintf(buf, "5%s", "utimes");
+	memcpy(buf + 8, path, strlen(path) + 1);
+	memcpy(buf + 9 + strlen(path), tv, sizeof(struct timeval) * 2);
+	return strlen(path) + 9 + sizeof(struct timeval) * 2;
 }
 
 static int pack_lstat(char *buf, const char *path)
@@ -238,17 +258,18 @@ static int pack_opendir(char *buf, const char *path)
 	return strlen(path) + 10;
 }
 
-static int pack_readdir(char *buf, DIR *dir)
+static int pack_readdir(char *buf, DIR **dir)
 {
 	sprintf(buf, "5%s", "readdir");
-	memcpy(buf + 9, &dir, sizeof(DIR *));
+	memcpy(buf + 9, dir, sizeof(DIR *));
+	printf("Is it an end of pack? \n");
 	return sizeof(DIR *) + 9;
 }
 
-static int pack_closedir(char *buf, DIR *dir)
+static int pack_closedir(char *buf, DIR **dir)
 {
 	sprintf(buf, "5%s", "closedir");
-	memcpy(buf + 10, &dir, sizeof(DIR *));
+	memcpy(buf + 10, dir, sizeof(DIR *));
 	return sizeof(DIR *) + 10;
 }
 
@@ -259,15 +280,19 @@ static int pack_close(char *buf, int fd)
 	return sizeof(int) + 7;
 }
 
-static int unpack(const char *syscall, char *buf, struct open_file *of, int server_num, struct stat *stbuf, DIR *dir, struct dirent *de)
+static int unpack(const char *syscall, char *buf, struct open_file *of, int server_num, struct stat *stbuf, DIR **dir, struct dirent *de)
 {
 	int rv;
 	memcpy(&rv, buf, sizeof(int));
 	errno = 0;
 	if (rv < 0) memcpy(&errno, buf + sizeof(int), sizeof(int));
+
+	print2i("rv", rv);
+	print2i("errno", errno);
+
 	if (strcmp(syscall, "open") == 0) if (rv > -1) rv = add_fd(of, rv, server_num);
 	if (strcmp(syscall, "lstat") == 0) memcpy(stbuf, buf + sizeof(int) * 2, sizeof(struct stat));
-	if (strcmp(syscall, "opendir") == 0) memcpy(&dir, buf + sizeof(int) * 2, sizeof(DIR *));
+	if (strcmp(syscall, "opendir") == 0) memcpy(dir, buf + sizeof(int) * 2, sizeof(DIR *));
 	if (strcmp(syscall, "readdir") == 0) memcpy(de, buf + sizeof(int) * 2, sizeof(struct dirent));
 	if (strcmp(syscall, "close") == 0) if (rv > -1) remove_fd(of, server_num);
 	return rv;
@@ -292,40 +317,58 @@ static int send_to_server(char buf[], size_t send_num, int server_num)
 }
 
 static int setter_function_on_server(const char *syscall, const char *path, const char *to,
-									 mode_t mode, int flags, struct open_file *of,
-									 const char *write_buf, size_t size, off_t offset, dev_t rdev)
+									 mode_t mode, int flags, struct open_file *of, dev_t rdev, struct timeval *tv)
 {
-	char buf[BUFFER_SIZE];
-	int send_num = 0;
-	if (strcmp(syscall, "mkdir") == 0) send_num = pack_mkdir(buf, path, mode);
-	else if (strcmp(syscall, "mknod") == 0) send_num = pack_mknod(buf, path, mode, rdev);
-	else if (strcmp(syscall, "rmdir") == 0) send_num = pack_rmdir(buf, path);
-	else if (strcmp(syscall, "open") == 0) send_num = pack_open(buf, path, flags, mode);
-	else if (strcmp(syscall, "rename") == 0) send_num = pack_rename(buf, path, to);
-	else if (strcmp(syscall, "unlink") == 0) send_num = pack_unlink(buf, path);
+	printf("setter start\n");
+	char info[1024];
+	sprintf(info, "%s path: %s, to: %s, mode: %d, flags: %d, of: %p, rdev: %d", syscall, path, to, (int)mode, flags, of, (int)rdev);
+	nrf_print_info(info);
 
+	char send_buf[BUFFER_SIZE];
+	int send_num = 0;
+	if (strcmp(syscall, "mkdir") == 0) send_num = pack_mkdir(send_buf, path, mode);
+	else if (strcmp(syscall, "mknod") == 0) send_num = pack_mknod(send_buf, path, mode, rdev);
+	else if (strcmp(syscall, "rmdir") == 0) send_num = pack_rmdir(send_buf, path);
+	else if (strcmp(syscall, "open") == 0) send_num = pack_open(send_buf, path, flags, mode);
+	else if (strcmp(syscall, "rename") == 0) {
+		// printf("\033[30;1maq mainc?\033[0m\n");
+		send_num = pack_rename(send_buf, path, to);
+	}
+	else if (strcmp(syscall, "unlink") == 0) send_num = pack_unlink(send_buf, path);
+	else if (strcmp(syscall, "utimes") == 0) send_num = pack_utimes(send_buf, path, tv);
+
+	char receive_buf[BUFFER_SIZE];
 	int hotswap_server_num = -1;
-	int rvs[servers_count];
-	memset(rvs, 0, servers_count);
+	int rv;
 	int i = 0;
 	for (; i < servers_count; i++)
 	{
-		int sent_num = send_to_server(buf, send_num, i);
+		// printf("AAAAAAAAAAAA send_num %d\n", send_num);
+		int sent_num = send_to_server(send_buf, send_num, i);
 		if (sent_num == -1)
 		{	
 			if (hotswap_server_num != -1) return SERVERS_DOWN;
 			hotswap_server_num = i;
 			continue;
 		}
+		// printf("BBBBBBBBBBBBB sent_num %d\n", sent_num);
 		int rec_num = 0;
 		int should_receive_num = receive_num(syscall);
 
-		char *temp_buf = buf;
+		char *temp_buf = receive_buf;
 		while (rec_num < should_receive_num)
 		{
 			should_receive_num -= rec_num;
 			temp_buf += rec_num;
+
+			// printf("BCBCBCBCBCB should_receive_num %d\n", should_receive_num);
+
 			rec_num = read(server_fds[i], temp_buf, should_receive_num);
+
+			// printf("\033[30;1mrec_num: %d\n", rec_num);
+			// dumphex(temp_buf, 128);
+			// printf("\033[0m\n");
+
 			if (rec_num <= 0)
 			{
 				if (hotswap_server_num != -1) return SERVERS_DOWN;
@@ -333,33 +376,47 @@ static int setter_function_on_server(const char *syscall, const char *path, cons
 				break;
 			}
 		}
+
+		// printf("CCCCCCCCCCCCCC\n");
+
 		if (hotswap_server_num == i) continue;
-		rvs[i] = unpack(syscall, buf, of, i, NULL, NULL, NULL);
-		if (rvs[i] == -1) break;
+		rv = unpack(syscall, receive_buf, of, i, NULL, NULL, NULL);
+		if (rv == -1) break;
 	}
+
+	printf("setter end\n");
 
 	if (hotswap_server_num != -1) hotswap(hotswap_server_num);
 
-	return rvs[i];
+	return rv;
 }
 
-static int getter_function_on_server(const char *syscall, const char *path, int mask, DIR *dir, int flags, struct open_file *of, int mode, struct stat *stbuf, int *server)
-{
-	char buf[BUFFER_SIZE];
+static int getter_function_on_server(const char *syscall, const char *path, int mask, DIR **dir, int flags, struct open_file *of, int mode, struct stat *stbuf, int *server)
+{	
+	printf("getter start\n");
+	char info[1024];
+	sprintf(info, "%s path: %s, mask: %d, flags: %d, of: %p, mode: %d, stbuf: %p, server: %p", syscall, path, mask, flags, of, mode, stbuf, server);
+	nrf_print_info(info);
+	
+	char send_buf[BUFFER_SIZE];
 	int send_num = 0;
-	if (strcmp(syscall, "lstat") == 0) send_num = pack_lstat(buf, path);
-	else if(strcmp(syscall, "open") == 0) send_num = pack_open(buf, path, flags, mode);
-	else if (strcmp(syscall, "access") == 0) send_num = pack_access(buf, path, mask);
-	else if (strcmp(syscall, "opendir") == 0) send_num = pack_opendir(buf, path);
+	if (strcmp(syscall, "lstat") == 0) send_num = pack_lstat(send_buf, path);
+	else if(strcmp(syscall, "open") == 0) send_num = pack_open(send_buf, path, flags, mode);
+	else if (strcmp(syscall, "access") == 0) send_num = pack_access(send_buf, path, mask);
+	else if (strcmp(syscall, "opendir") == 0) send_num = pack_opendir(send_buf, path);
 
+	nrf_print_value(send_buf);
+	nrf_print_value(send_buf + strlen(send_buf) + 1);
+
+	char receive_buf[BUFFER_SIZE];
 	int hotswap_server_num = -1;
 	int i = 0;
 	int rv = -1;
 	for (; i < servers_count; i++)
 	{
-		int sent_num = send_to_server(buf, send_num, i);
+		int sent_num = send_to_server(send_buf, send_num, i);
 		if (sent_num == -1)
-		{	
+		{
 			if (hotswap_server_num != -1) return SERVERS_DOWN;
 			hotswap_server_num = i;
 			continue;
@@ -367,7 +424,7 @@ static int getter_function_on_server(const char *syscall, const char *path, int 
 		int rec_num = 0;
 		int should_receive_num = receive_num(syscall);
 
-		char *temp_buf = buf;
+		char *temp_buf = receive_buf;
 		while (rec_num < should_receive_num)
 		{
 			should_receive_num -= rec_num;
@@ -381,8 +438,9 @@ static int getter_function_on_server(const char *syscall, const char *path, int 
 			}
 		}
 		if (hotswap_server_num == i) continue;
-		rv = unpack(syscall, buf, of, i, stbuf, dir, NULL);
-		if (rv > -1) break;
+		rv = unpack(syscall, receive_buf, of, i, stbuf, dir, NULL);
+		printf("loop end %d\n", i);
+		break;
 	}
 
 	*server = i;
@@ -390,8 +448,13 @@ static int getter_function_on_server(const char *syscall, const char *path, int 
 	return rv;
 }
 
-static int function_on_one_server(const char *syscall, DIR *dir, struct dirent *de, int id, int server)
+static int function_on_one_server(const char *syscall, DIR **dir, struct dirent *de, int id, int server)
 {
+	printf("oner start\n");
+	char info[1024];
+	sprintf(info, "%s de: %p, id: %d, server: %d", syscall, de, id, server);
+	nrf_print_info(info);
+
 	char buf[BUFFER_SIZE];
 	int send_num = 0;
 	if (strcmp(syscall, "readdir") == 0) send_num = pack_readdir(buf, dir);
@@ -419,294 +482,10 @@ static int function_on_one_server(const char *syscall, DIR *dir, struct dirent *
 			return -1;
 		}
 	}
-	return unpack(syscall, buf, open_files[id], server, NULL, dir, de);
+
+	int rv = unpack(syscall, buf, open_files[id], server, NULL, dir, de);
+	return rv;
 }
-
-// static int lstat_on_server(const char *path, struct stat *stbuf);
-// static int access_on_server(const char *path, int mask);
-
-// static DIR *opendir_on_server(const char *path, int *server);
-// static struct dirent *readdir_on_server(DIR *dir, int server);
-// static int closedir_on_server(DIR *dir, int server);
-
-// static int pread_on_server(int open_fd, char *read_buf, size_t size, off_t offset, int server);
-// static int pwrite_on_server(const char *path, struct open_file *of, const char *write_buf, size_t size, off_t offset);
-// static int truncate_on_server(const char *path, off_t size);
-// static int close_on_server(int close_fd, int server);
-
-// static int lstat_on_server(const char *path, struct stat *stbuf)
-// {
-// 	char buf[1024];
-// 	sprintf(buf, "5%s", "lstat");
-// 	memcpy(buf + 7, path, strlen(path) + 1);
-
-// 	int status = send_to_server(buf, strlen(path) + 8, GET);
-
-// 	if (status == -1) return -1;
-
-// 	int read_size = sizeof(struct stat) + sizeof(int) + sizeof(int);
-// 	if (read(server_fds[status], buf, read_size) != read_size) return -1;
-
-// 	memcpy(stbuf, buf, sizeof(struct stat));
-
-// 	int rv;
-// 	memcpy(&rv, buf + sizeof(struct stat), sizeof(int));
-// 	if (rv < 0) memcpy(&errno, buf + sizeof(struct stat) + sizeof(int), sizeof(int));
-
-// 	return rv;
-// }
-
-// static int access_on_server(const char *path, int mask)
-// {
-// 	char buf[1024];
-// 	sprintf(buf, "5%s", "access");
-// 	memcpy(buf + 8, path, strlen(path) + 1);
-// 	memcpy(buf + 9 + strlen(path), &mask, sizeof(int));
-// 	int status = send_to_server(buf, strlen(path) + 9 + sizeof(int), GET);
-
-// 	if (status == -1) return -1;
-
-// 	int read_size = sizeof(int) * 2;
-// 	if (read(server_fds[status], buf, read_size) != read_size) return -1;
-
-// 	int rv;
-// 	memcpy(&rv, buf, sizeof(int));
-// 	if (rv < 0) memcpy(&errno, buf + sizeof(int), sizeof(int));
-
-// 	return rv;
-// }
-
-// static int mknod_on_server(const char *path, mode_t mode, dev_t rdev)
-// {
-// 	char buf[1024];
-// 	sprintf(buf, "5%s", "mknod");
-// 	memcpy(buf + 7, path, strlen(path) + 1);
-// 	memcpy(buf + 8 + strlen(path), &mode, sizeof(mode_t));
-// 	memcpy(buf + 8 + strlen(path) + sizeof(mode_t), &rdev, sizeof(dev_t));
-// 	int status = send_to_server(buf, strlen(path) + 8 + sizeof(mode_t) + sizeof(dev_t), SET);
-
-// 	if (status != ALL) return -1;
-
-// 	int rv;
-// 	int i = 0;
-// 	while (server_fds[i] != UNSET_FD || i != MAX_SERVERS)
-// 	{
-// 		status = read(server_fds[i], buf, sizeof(int) * 2);
-// 		if (status != sizeof(int) * 2) return -1;
-// 		memcpy(&rv, buf, sizeof(int));
-// 		if (rv < 0)
-// 		{
-// 			memcpy(&errno, buf + sizeof(int), sizeof(int));
-// 			return rv;
-// 		}
-// 		i++;
-// 	}
-
-// 	return rv;
-// }
-
-// static int mkdir_on_server(const char *path, mode_t mode)
-// {
-// 	char buf[1024];
-// 	sprintf(buf, "5%s", "mkdir");
-// 	memcpy(buf + 7, path, strlen(path) + 1);
-// 	memcpy(buf + 8 + strlen(path), &mode, sizeof(mode_t));
-// 	int status = send_to_server(buf, strlen(path) + 8 + sizeof(mode_t), SET);
-
-// 	if (status != ALL) return -1;
-
-// 	int rv;
-// 	int i = 0;
-// 	while (server_fds[i] != UNSET_FD || i != MAX_SERVERS)
-// 	{
-// 		status = read(server_fds[i], buf, sizeof(int) * 2);
-// 		if (status != sizeof(int) * 2) return -1;
-// 		memcpy(&rv, buf, sizeof(int));
-// 		if (rv < 0)
-// 		{
-// 			memcpy(&errno, buf + sizeof(int), sizeof(int));
-// 			return rv;
-// 		}
-// 		i++;
-// 	}
-
-// 	return rv;
-// }
-
-// static DIR *opendir_on_server(const char *path, int *server)
-// {
-// 	char buf[1024];
-// 	sprintf(buf, "5%s", "opendir");
-// 	memcpy(buf + 9, path, strlen(path) + 1);
-// 	int status = send_to_server(buf, strlen(path) + 10, GET);
-
-// 	if (status == -1) return NULL;
-
-// 	*server = status;
-
-// 	int read_size = sizeof(DIR *) + sizeof(int);
-// 	if (read(server_fds[status], buf, read_size) != read_size) return NULL;
-
-// 	DIR *dir;
-// 	memcpy(&dir, buf, sizeof(DIR *));
-// 	(if dir == NULL) memcpy(&errno, buf + sizeof(DIR *), sizeof(int));
-
-// 	// err_file = fopen(global_config->err_log_path, "a");
-// 	// fprintf(err_file, "opendir_on_server: Dir: %p\n", dir);
-// 	// fclose(err_file);
-
-// 	return dir;
-// }
-
-// static struct dirent *readdir_on_server(DIR *dir, int server)
-// {
-// 	// err_file = fopen(global_config->err_log_path, "a");
-// 	// fprintf(err_file, "readdir_on_server: Dir: %p\n", dir);
-
-// 	char buf[1024];
-// 	sprintf(buf, "5%s", "readdir");
-// 	memcpy(buf + 9, &dir, sizeof(DIR *));
-// 	int status = send_to_server(buf, sizeof(DIR *) + 9, server);
-
-// 	if (status != server) return NULL;
-
-// 	int read_size = sizeof(struct dirent) + sizeof(int);
-// 	if (read(server_fds[status], buf, read_size) != read_size) return NULL;
-
-// 	if (strcmp(buf, "NULL") == 0) 
-// 	{
-// 		memcpy(&errno, buf + 5, sizeof(int));
-// 		return NULL;
-// 	}
-
-// 	struct dirent *entry = malloc(sizeof(struct dirent));
-// 	memcpy(entry, buf, sizeof(struct dirent));
-// 	memcpy(&errno, buf + sizeof(struct dirent), sizeof(int));
-
-// 	// fprintf(err_file, "readdir_on_server: Entry { d_ino: %zu, d_type: %d, d_name: %s }\n", entry->d_ino, entry->d_type, entry->d_name);
-// 	// fclose(err_file);
-
-// 	return entry;
-// }
-
-// static int closedir_on_server(DIR *dir, int server)
-// {
-// 	// err_file = fopen(global_config->err_log_path, "a");
-// 	// fprintf(err_file, "closedir_on_server: Dir: %p\n", dir);
-// 	// fclose(err_file);
-
-// 	char buf[1024];
-// 	sprintf(buf, "5%s", "closedir");
-// 	memcpy(buf + 10, &dir, sizeof(DIR *));
-// 	int status = send_to_server(buf, sizeof(DIR *) + 10, server);
-
-// 	if (status != server) return -1;
-
-// 	int read_size = sizeof(int);
-// 	if (read(server_fds[status], buf, read_size) != read_size) return -1;
-
-// 	int errno_temp;
-// 	memcpy(&errno_temp, buf, sizeof(int));
-// 	if (errno_temp != 0) errno = errno_temp;
-
-// 	return 0;
-// }
-
-// static int rmdir_on_server(const char *path)
-// {
-// 	char buf[1024];
-// 	sprintf(buf, "5%s", "rmdir");
-// 	memcpy(buf + 7, path, strlen(path) + 1);
-// 	int status = send_to_server(buf, strlen(path) + 8, SET);
-
-// 	if (status != ALL) return -1;
-
-// 	int rv;
-// 	int i = 0;
-// 	while (server_fds[i] != UNSET_FD || i != MAX_SERVERS)
-// 	{
-// 		status = read(server_fds[i], buf, sizeof(int) * 2);
-// 		if (status != sizeof(int) * 2) return -1;
-// 		memcpy(&rv, buf, sizeof(int));
-// 		if (rv < 0)
-// 		{
-// 			memcpy(&errno, buf + sizeof(int), sizeof(int));
-// 			return rv;
-// 		}
-// 		i++;
-// 	}
-
-// 	return rv;
-// }
-
-// static struct open_file *open_on_server(const char *path, int flags, mode_t mode)
-// {
-// 	char buf[1024];
-// 	sprintf(buf, "5%s", "open");
-// 	memcpy(buf + 6, path, strlen(path) + 1);
-// 	memcpy(buf + 7 + strlen(path), &flags, sizeof(int));
-// 	memcpy(buf + 7 + strlen(path) + sizeof(int), &mode, sizeof(mode_t));
-// 	int status;
-// 	int rv = 0;
-
-// 	struct open_file *of;
-
-// 	// If open is required on both servers
-// 	if (flags & O_CREAT || flags & O_WRONLY)
-// 	{
-// 		int open_fds[MAX_SERVERS];
-
-// 		status = send_to_server(buf, 7 + strlen(path) + sizeof(int) + sizeof(mode_t), SET);
-// 		if (status != ALL) return NULL;
-
-// 		int statuses[MAX_SERVERS];
-// 		int need_to_close = 0;
-
-// 		int i = 0;
-// 		while (server_fds[i] != UNSET_FD || i != MAX_SERVERS)
-// 		{
-// 			statuses[i] = read(server_fds[i], buf + sizeof(int) * 2 * i, sizeof(int) * 2);
-// 			if (statuses[i] < 0) need_to_close = 1;
-// 			else memcpy(open_fds + i, buf + sizeof(int) * 2 * i, sizeof(int));
-// 			i++;
-// 		}
-
-// 		if (need_to_close == 1)
-// 		{
-// 			for (i = 0; server_fds[i] != UNSET_FD || i != MAX_SERVERS; i++)
-// 				if (statuses[i] > -1 && open_fds[i] > -1) close_on_server(open_fds[i], i);
-// 			return NULL;
-// 		}
-
-// 		for (i = 0; server_fds[i] != UNSET_FD || i != MAX_SERVERS; i++)
-// 			if (open_fds[i] < 0) memcpy(&errno, buf + sizeof(int) * 2 * i + sizeof(int), sizeof(int));
-
-// 		of = add_open_file(path, open_fds, i);
-// 	}
-// 	else
-// 	{
-// 		status = send_to_server(buf, 7 + strlen(path) + sizeof(int) + sizeof(mode_t), GET);
-// 		if (status == -1) return NULL;
-		
-// 		int read_size = sizeof(int) * 2;
-// 		if (read(server_fds[status], buf, read_size) != read_size) return NULL;
-		
-// 		memcpy(&rv, buf, sizeof(int));
-// 		if (rv < 0) memcpy(&errno, buf + sizeof(int), sizeof(int));
-
-// 		int open_fds[MAX_SERVERS];
-// 		int i = 0;
-// 		for (; server_fds[i] != UNSET_FD || i != MAX_SERVERS; i++)
-// 		{
-// 			if (i == status) open_fds[i] = rv;
-// 			else open_fds[i] = UNOPENED;
-// 		}
-
-// 		of = add_open_file(path, open_fds, i);
-// 	}
-
-// 	return of;
-// }
 
 static int pread_on_server(int open_fd, char *read_buf, size_t size, off_t offset, int server)
 {
@@ -818,82 +597,8 @@ static int truncate_on_server(const char *path, off_t size)
 	return 0;
 }
 
-// static int close_on_server(int close_fd, int server)
-// {
-// 	char buf[1024];
-// 	sprintf(buf, "5%s", "close");
-// 	memcpy(buf + 7, &close_fd, sizeof(int));
-// 	int status = send_to_server(buf, sizeof(int) + 7, server);
-
-// 	if (status != server) return -1;
-
-// 	int read_size = sizeof(int);
-// 	if (read(server_fds[server], buf, read_size) != read_size) return -1;
-
-// 	int errno_temp;
-// 	memcpy(&errno_temp, buf, sizeof(int));
-// 	if (errno_temp != 0) errno = errno_temp;
-
-// 	return 0;
-// }
-
-// static int rename_on_server(const char *from, const char *to)
-// {
-// 	char buf[1024];
-// 	sprintf(buf, "5%s", "rename");
-// 	memcpy(buf + 8, from, strlen(from) + 1);
-// 	memcpy(buf + 9 + strlen(from), to, strlen(to) + 1);
-// 	int status = send_to_server(buf, strlen(from) + strlen(to) + 10, SET);
-
-// 	if (status != ALL) return -1;
-
-// 	int rv;
-// 	int i = 0;
-// 	while (server_fds[i] != UNSET_FD || i != MAX_SERVERS)
-// 	{
-// 		status = read(server_fds[i], buf, sizeof(int) * 2);
-// 		if (status != sizeof(int) * 2) return -1;
-// 		memcpy(&rv, buf, sizeof(int));
-// 		if (rv < 0)
-// 		{
-// 			memcpy(&errno, buf + sizeof(int), sizeof(int));
-// 			return rv;
-// 		}
-// 		i++;
-// 	}
-
-// 	return rv;
-// }
-
-// static int unlink_on_server(const char *path)
-// {
-// 	char buf[1024];
-// 	sprintf(buf, "5%s", "unlink");
-// 	memcpy(buf + 8, path, strlen(path) + 1);
-// 	int status = send_to_server(buf, strlen(path) + 9, SET);
-
-// 	if (status != ALL) return -1;
-
-// 	int rv;
-// 	int i = 0;
-// 	while (server_fds[i] != UNSET_FD || i != MAX_SERVERS)
-// 	{
-// 		status = read(server_fds[i], buf, sizeof(int) * 2);
-// 		if (status != sizeof(int) * 2) return -1;
-// 		memcpy(&rv, buf, sizeof(int));
-// 		if (rv < 0)
-// 		{
-// 			memcpy(&errno, buf + sizeof(int), sizeof(int));
-// 			return rv;
-// 		}
-// 		i++;
-// 	}
-
-// 	return rv;
-// }
-
 static int raid_5_getattr(const char *path, struct stat *stbuf);
-static int raid_5_access(const char *path, int mask);
+// static int raid_5_access(const char *path, int mask);
 static int raid_5_mknod(const char *path, mode_t mode, dev_t rdev);
 
 static int raid_5_mkdir(const char *path, mode_t mode);
@@ -913,28 +618,30 @@ static int raid_5_unlink(const char *path);
 static int raid_5_getattr(const char *path, struct stat *stbuf)
 {
 	print2("getattr", path);
-	if (getter_function_on_server("lstat", path, 0, NULL, 0, NULL, 0, stbuf, NULL) == -1) return -errno;
+	int server;
+	if (getter_function_on_server("lstat", path, 0, NULL, 0, NULL, 0, stbuf, &server) == -1) return -errno;
 	return 0;
 }
 
-static int raid_5_access(const char *path, int mask)
-{
-	print2("access", path);
-	if (getter_function_on_server("access", path, mask, NULL, 0, NULL, 0, NULL, NULL) == -1) return -errno;
-	return 0;
-}
+// static int raid_5_access(const char *path, int mask)
+// {
+// 	print2("access", path);
+// 	int server;
+// 	if (getter_function_on_server("access", path, mask, NULL, 0, NULL, 0, NULL, &server) == -1) return -errno;
+// 	return 0;
+// }
 
 static int raid_5_mknod(const char *path, mode_t mode, dev_t rdev)
 {
 	print2("mknod", path);
-	if (setter_function_on_server("mknod", path, "", mode, 0, NULL, NULL, 0, 0, rdev) == -1) return -errno;
+	if (setter_function_on_server("mknod", path, "", mode, 0, NULL, rdev, NULL) == -1) return -errno;
 	return 0;
 }
 
 static int raid_5_mkdir(const char *path, mode_t mode)
 {
 	print2("mkdir", path);
-	if (setter_function_on_server("mkdir", path, "", mode, 0, NULL, NULL, 0, 0, 0) == -1) return -errno;
+	if (setter_function_on_server("mkdir", path, "", mode, 0, NULL, 0, NULL) == -1) return -errno;
 	return 0;
 }
 
@@ -944,16 +651,15 @@ static int raid_5_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 	print2("readdir", path);
 
 	DIR *dp = NULL;
-	struct dirent *de = NULL;
+	struct dirent *de = malloc(sizeof(struct dirent));
 
 	(void) offset;
 	(void) fi;
 
 	int server;
-	if (getter_function_on_server("opendir", path, 0, dp, 0, NULL, 0, NULL, &server) == -1) return -errno;
+	if (getter_function_on_server("opendir", path, 0, &dp, 0, NULL, 0, NULL, &server) == -1) return -errno;
 
-	function_on_one_server("readdir", dp, de, 0, server);
-	while (function_on_one_server("readdir", dp, de, 0, server) != -1)
+	while (function_on_one_server("readdir", &dp, de, 0, server) != -1)
 	{
 		struct stat st;
 		memset(&st, 0, sizeof(st));
@@ -961,17 +667,18 @@ static int raid_5_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 		st.st_mode = de->d_type << 12;
 		if (filler(buf, de->d_name, &st, 0)) break;
 		free(de);
+		de = malloc(sizeof(struct dirent));
 	}
 	free(de);
 
-	function_on_one_server("closedir", dp, NULL, 0, server);
+	function_on_one_server("closedir", &dp, NULL, 0, server);
 	return 0;
 }
 
 static int raid_5_rmdir(const char *path)
 {
 	print2("rmdir", path);
-	if (setter_function_on_server("rmdir", path, "", 0, 0, NULL, NULL, 0, 0, 0) == -1) return -errno;
+	if (setter_function_on_server("rmdir", path, "", 0, 0, NULL, 0, NULL) == -1) return -errno;
 	return 0;
 }
 
@@ -979,8 +686,13 @@ static int raid_5_create(const char *path, mode_t mode, struct fuse_file_info *f
 {
 	print2("create", path);
 	struct open_file *of = init_open_file();
-	int res = setter_function_on_server("open", path, "", mode, fi->flags, of, NULL, 0, 0, 0);
+	int res = setter_function_on_server("open", path, "", mode, fi->flags, of, 0, NULL);
 	fi->fh = res;
+
+	printf("\033[30;1mfi->fh: %d\033[0m\n", (int)fi->fh);
+
+	print_open_files();
+
 	if (res < 0) return -errno;
 	return 0;
 }
@@ -991,27 +703,17 @@ static int raid_5_open(const char *path, struct fuse_file_info *fi)
 	
 	struct open_file *of = init_open_file();
 	int res;
+	int server;
 	if (fi->flags & (O_WRONLY | O_CREAT))
-		res = setter_function_on_server("open", path, "", 0, fi->flags, of, NULL, 0, 0, 0);
+		res = setter_function_on_server("open", path, "", 0, fi->flags, of, 0, NULL);
 	else
-		res = getter_function_on_server("open", path, 0, NULL, fi->flags, of, 0, NULL, NULL);
+		res = getter_function_on_server("open", path, 0, NULL, fi->flags, of, 0, NULL, &server);
 	fi->fh = res;
+
+	print_open_files();
+
 	if (res < 0) return -errno;
 	return 0;
-	// if (of->fd_1 >= 0 && of->fd_2 >= 0) return 0;
-	// if (of->fd_1 >= 0 && of->fd_2 == UNOPENED) return 0;
-	// if (of->fd_1 == UNOPENED && of->fd_2 >= 0) return 0;
-	// if ((of->fd_1 == UNOPENED || of->fd_2 == UNOPENED) && (of->fd_1 == FILE_DAMAGED || of->fd_2 == FILE_DAMAGED))
-	// {
-	// 	raid_5_release(path, fi);
-	// 	of = open_on_server(path, fi->flags | O_WRONLY, 0000);
-	// }		
-	// if (of->fd_1 == FILE_DAMAGED && of->fd_2 != FILE_DAMAGED) copy_file(of, 1, 2);
-	// else if (of->fd_1 != FILE_DAMAGED && of->fd_2 == FILE_DAMAGED) copy_file(of, 2, 1);
-	// else if (of->fd_1 == FILE_DAMAGED && of->fd_2 == FILE_DAMAGED) return -EBADFD;
-	// else return -errno;
-	// raid_5_release(path, fi);
-	// return raid_5_open(path, fi);
 }
 
 static int raid_5_read(const char *path, char *buf, size_t size, off_t offset,
@@ -1073,10 +775,11 @@ static int raid_5_truncate(const char *path, off_t size)
 static int raid_5_release(const char *path, struct fuse_file_info *fi)
 {
 	print2("release", path);
+	printf("\033[30;1mfi->fh: %d\033[0m\n", (int)fi->fh);
 
 	int i = 0;
 	for (; i < servers_count; i++)
-		if (open_files[fi->fh]->fds[i] != UNOPENED)
+		if (open_files[fi->fh] != NULL && open_files[fi->fh]->fds[i] != UNOPENED)
 			function_on_one_server("close", NULL, NULL, fi->fh, i);
 
 	print_open_files();
@@ -1088,20 +791,35 @@ static int raid_5_rename(const char *from, const char *to)
 {
 	print3("rename", from, to);
 
-	if (setter_function_on_server("raname", from, to, 0, 0, NULL, NULL, 0, 0, 0) == -1) return -errno;
+	if (setter_function_on_server("rename", from, to, 0, 0, NULL, 0, NULL) == -1) return -errno;
 	return 0;
 }
 
 static int raid_5_unlink(const char *path)
 {
 	print2("unlink", path);
-	if (setter_function_on_server("unlink", path, "", 0, 0, NULL, NULL, 0, 0, 0) == -1) return -errno;
+	if (setter_function_on_server("unlink", path, "", 0, 0, NULL, 0, NULL) == -1) return -errno;
+	return 0;
+}
+
+static int raid_5_utimens(const char *path, const struct timespec ts[2])
+{
+	// print2("utimens", path);
+
+	// struct timeval tv[2];
+
+	// tv[0].tv_sec = ts[0].tv_sec;
+	// tv[0].tv_usec = ts[0].tv_nsec / 1000;
+	// tv[1].tv_sec = ts[1].tv_sec;
+	// tv[1].tv_usec = ts[1].tv_nsec / 1000;
+
+	// if (setter_function_on_server("unlink", path, "", 0, 0, NULL, 0, tv) == -1) return -errno;
 	return 0;
 }
 
 static struct fuse_operations raid_5_oper = {
 	.getattr	= raid_5_getattr,
-	.access		= raid_5_access,
+	// .access		= raid_5_access,
 	.readdir	= raid_5_readdir,
 	.mknod		= raid_5_mknod,
 	.create     = raid_5_create,
@@ -1114,15 +832,12 @@ static struct fuse_operations raid_5_oper = {
 	.read		= raid_5_read,
 	.write		= raid_5_write,
 	.release	= raid_5_release,
+	.utimens	= raid_5_utimens,
 };
 
 int mount_raid_5(int argc, char *argv[], struct storage *storage)
 {
-	// FILE *f = fopen("/home/babdus/Documents/OS/nrf.log", "w");
-	// fclose(f);
 	global_storage = storage;
-
-	// err_file = fopen(global_config->err_log_path, "a");
 
 	init_open_files();
 
@@ -1141,11 +856,6 @@ int mount_raid_5(int argc, char *argv[], struct storage *storage)
 		server_fds[i] = UNSET_FD;
 		servers[i] = NULL;	
 	}
-
-	// char *info_msg = (char*)malloc(strlen(argv[2]) + 32);
-	// sprintf(info_msg, "Mounting directory '%s'", argv[2]);
-	// nrf_print_info(info_msg);
-	// free(info_msg);
 
 	umask(0);
 	return fuse_main(argc, argv, &raid_5_oper, NULL);

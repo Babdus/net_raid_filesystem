@@ -38,3 +38,4 @@ clean:
 
 unmount:
 	sudo umount -f /home/vagrant/code/personal/final-nrf/mount_dirs/Kosciuszko
+	sudo umount -f /home/vagrant/code/personal/final-nrf/mount_dirs/Aconcagua

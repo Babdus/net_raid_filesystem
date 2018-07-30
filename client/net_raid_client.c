@@ -13,6 +13,7 @@
 #include "../nrf_print.h"
 #include "config_parser.h"
 #include "fuse_raid_1.h"
+#include "fuse_raid_5.h"
 #include "connection.h"
 
 void print_config(struct config *config)
@@ -63,35 +64,22 @@ void print_config(struct config *config)
 
 static void mount(struct storage *storage)
 {	
+
+	int argc = 3;
+	char *argv[argc];
+	argv[0] = strdup("net_raid_client");
+	argv[1] = strdup("-f");
+	argv[2] = strdup(storage->mountpoint);
+
+	int status = -1;
 	if(storage->raid == 1)
 	{
-		int argc = 3;
-		char *argv[argc];
-		argv[0] = strdup("net_raid_client");
-		argv[1] = strdup("-f");
-		argv[2] = strdup(storage->mountpoint);
-
-		int status = mount_raid_1(argc, argv, storage);
-		
-		if (status == 0)
-		{
-			char *info_msg = (char*)malloc(strlen(argv[2]) + 31);
-			sprintf(info_msg, "Mounted directory '%s'", argv[2]);
-			nrf_print_success(info_msg);
-			free(info_msg);
-		}
-		else
-		{
-			nrf_print_error("Mount failed");
-		}
-		free(argv[0]);
-		free(argv[1]);
-		free(argv[2]);
+		status = mount_raid_1(argc, argv, storage);
 	}
-	// else if(storage->raid == 5)
-	// {
-	// 	mount_raid_5(storage, config);
-	// }
+	else if(storage->raid == 5)
+	{
+		status = mount_raid_5(argc, argv, storage);
+	}
 	else
 	{
 		char *msg = (char*)malloc(45);
@@ -99,6 +87,19 @@ static void mount(struct storage *storage)
 		nrf_print_warning(msg);
 		free(msg);
 	}
+
+	if (status == 0)
+	{
+		char *info_msg = (char*)malloc(strlen(argv[2]) + 31);
+		sprintf(info_msg, "Mounted directory '%s'", argv[2]);
+		nrf_print_success(info_msg);
+		free(info_msg);
+	}
+	else nrf_print_error("Mount failed");
+
+	free(argv[0]);
+	free(argv[1]);
+	free(argv[2]);
 
 	// char buf[1024];
 
@@ -140,8 +141,16 @@ int main (int argc, char **argv)
 		// print_config(config);
 		struct storage *storage = global_config->storages;
 		while (storage != NULL){
-			
 			mount(storage);
+			// switch(fork()) {
+			// 	case -1:
+			// 		exit(100);
+			// 	case 0:
+			// 		mount(storage);
+			// 		exit(0);
+			// 	default:
+			// 		storage = storage->next_storage;
+			// }
 			storage = storage->next_storage;
 		}
 		return 0;

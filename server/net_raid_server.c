@@ -225,6 +225,9 @@ int call_raid_1_function(int client_fd, char *buf)
 
 		int rv = access(path, mask);
 
+		print2i(buf, rv);
+		print2i(buf, errno);
+
 		free(path);
 
 		buf--;
@@ -464,7 +467,7 @@ int call_raid_1_function(int client_fd, char *buf)
 
 		print2i(buf, rv);
 		print2(buf, read_buf);
-		printf("size: %d, offset: %d, rv: %d\n", size, offset, rv);
+		printf("size: %d, offset: %d, rv: %d\n", (int)size, (int)offset, rv);
 
 		buf--;
 
@@ -582,6 +585,28 @@ int call_raid_1_function(int client_fd, char *buf)
 		print2i(buf, fd);
 
 		int rv = close(fd);
+
+		buf--;
+		memcpy(buf, &rv, sizeof(int));
+		memcpy(buf + sizeof(int), &errno, sizeof(int));
+		return sizeof(int) * 2;
+	}
+	else if (strcmp(buf, "utimes") == 0)
+	{
+		char *path = malloc(PATH_LEN);
+		path[0] = '\0';
+
+		strcat(path, global_path);
+		strcat(path, buf + 7);
+
+		print2(buf, path);
+
+		struct timeval tv[2];
+		memcpy(tv, buf + 8 + strlen(buf + 7), sizeof(struct timeval) * 2);
+
+		int rv = utimes(path, tv);
+
+		free(path);
 
 		buf--;
 		memcpy(buf, &rv, sizeof(int));
