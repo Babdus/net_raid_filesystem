@@ -1,6 +1,7 @@
 #include "fuse_raid_5.h"
 
 #define BUFFER_SIZE 1024
+#define CHUNK_SIZE 256
 
 #define SET 34
 #define GET 43
@@ -24,6 +25,7 @@ int servers_count;
 
 struct open_file {
 	int fds[MAX_SERVERS];
+	char *path;
 	int id;
 };
 
@@ -95,6 +97,7 @@ static void print_open_files()
 			if (null_count > 0) printf("%d NULLs\n", null_count);
 			null_count = 0;
 			printf("id: %d\n", i);
+			printf("path: %s\n", open_files[i]->path);
 			int j = 0;
 			for(; j < servers_count; j++)
 				printf("fd_%d: %d\n", j, open_files[i]->fds[j]);
@@ -120,7 +123,7 @@ static struct open_file *init_open_file()
 	return of;
 }
 
-static int add_fd(struct open_file *of, int fd, int server_num)
+static int add_fd(struct open_file *of, int fd, int server_num, const char *path)
 {
 	if (of->id == -1)
 	{
@@ -128,6 +131,7 @@ static int add_fd(struct open_file *of, int fd, int server_num)
 		while (open_files[i] != NULL) i++;
 		open_files[i] = of;
 		of->id = i;
+		of->path = strdup(path);
 	}
 	of->fds[server_num] = fd;
 	printf("of: id: %d\n", of->id);
@@ -148,7 +152,8 @@ static void remove_fd(struct open_file *of, int server_num)
 	printf("\033[33mres in remove fd: %d\033[0m\n", res);
 
 	if (res == -1)
-	{
+	{	
+		free(of->path);
 		int id = of->id;
 		printf("\033[30mbefore free\033[0m\n");
 		free(open_files[id]);
@@ -273,6 +278,25 @@ static int pack_closedir(char *buf, DIR **dir)
 	return sizeof(DIR *) + 10;
 }
 
+static int pack_write(char *buf, int fd, int offset, int size, const char *write_buf)
+{
+	sprintf(buf, "5%s", "write");
+	memcpy(buf + 7, &fd, sizeof(int));
+	memcpy(buf + 7 + sizeof(int), &offset, sizeof(int));
+	memcpy(buf + 7 + sizeof(int) * 2, &size, sizeof(int));
+	memcpy(buf + 7 + sizeof(int) * 3, write_buf, size);
+	return 7 + sizeof(int) * 3 + size;
+}
+
+static int pack_read(char *buf, int fd, int offset, int size)
+{
+	sprintf(buf, "5%s", "read");
+	memcpy(buf + 6, &fd, sizeof(int));
+	memcpy(buf + 6 + sizeof(int), &offset, sizeof(int));
+	memcpy(buf + 6 + sizeof(int) * 2, &size, sizeof(int));
+	return 6 + sizeof(int) * 3;
+}
+
 static int pack_close(char *buf, int fd)
 {
 	sprintf(buf, "5%s", "close");
@@ -280,7 +304,7 @@ static int pack_close(char *buf, int fd)
 	return sizeof(int) + 7;
 }
 
-static int unpack(const char *syscall, char *buf, struct open_file *of, int server_num, struct stat *stbuf, DIR **dir, struct dirent *de)
+static int unpack(const char *syscall, const char *path, char *buf, struct open_file *of, int server_num, struct stat *stbuf, DIR **dir, struct dirent *de)
 {
 	int rv;
 	memcpy(&rv, buf, sizeof(int));
@@ -290,7 +314,7 @@ static int unpack(const char *syscall, char *buf, struct open_file *of, int serv
 	print2i("rv", rv);
 	print2i("errno", errno);
 
-	if (strcmp(syscall, "open") == 0) if (rv > -1) rv = add_fd(of, rv, server_num);
+	if (strcmp(syscall, "open") == 0) if (rv > -1) rv = add_fd(of, rv, server_num, path);
 	if (strcmp(syscall, "lstat") == 0) memcpy(stbuf, buf + sizeof(int) * 2, sizeof(struct stat));
 	if (strcmp(syscall, "opendir") == 0) memcpy(dir, buf + sizeof(int) * 2, sizeof(DIR *));
 	if (strcmp(syscall, "readdir") == 0) memcpy(de, buf + sizeof(int) * 2, sizeof(struct dirent));
@@ -330,10 +354,7 @@ static int setter_function_on_server(const char *syscall, const char *path, cons
 	else if (strcmp(syscall, "mknod") == 0) send_num = pack_mknod(send_buf, path, mode, rdev);
 	else if (strcmp(syscall, "rmdir") == 0) send_num = pack_rmdir(send_buf, path);
 	else if (strcmp(syscall, "open") == 0) send_num = pack_open(send_buf, path, flags, mode);
-	else if (strcmp(syscall, "rename") == 0) {
-		// printf("\033[30;1maq mainc?\033[0m\n");
-		send_num = pack_rename(send_buf, path, to);
-	}
+	else if (strcmp(syscall, "rename") == 0) send_num = pack_rename(send_buf, path, to);
 	else if (strcmp(syscall, "unlink") == 0) send_num = pack_unlink(send_buf, path);
 	else if (strcmp(syscall, "utimes") == 0) send_num = pack_utimes(send_buf, path, tv);
 
@@ -380,7 +401,7 @@ static int setter_function_on_server(const char *syscall, const char *path, cons
 		// printf("CCCCCCCCCCCCCC\n");
 
 		if (hotswap_server_num == i) continue;
-		rv = unpack(syscall, receive_buf, of, i, NULL, NULL, NULL);
+		rv = unpack(syscall, path, receive_buf, of, i, NULL, NULL, NULL);
 		if (rv == -1) break;
 	}
 
@@ -438,7 +459,7 @@ static int getter_function_on_server(const char *syscall, const char *path, int 
 			}
 		}
 		if (hotswap_server_num == i) continue;
-		rv = unpack(syscall, receive_buf, of, i, stbuf, dir, NULL);
+		rv = unpack(syscall, path, receive_buf, of, i, stbuf, dir, NULL);
 		printf("loop end %d\n", i);
 		break;
 	}
@@ -448,18 +469,21 @@ static int getter_function_on_server(const char *syscall, const char *path, int 
 	return rv;
 }
 
-static int function_on_one_server(const char *syscall, DIR **dir, struct dirent *de, int id, int server)
+static int function_on_one_server(const char *syscall, DIR **dir, struct dirent *de, int id, int server, int offset, int size, const char *write_buf, char *read_buf, struct stat *stbuf, const char *path)
 {
 	printf("oner start\n");
 	char info[1024];
-	sprintf(info, "%s de: %p, id: %d, server: %d", syscall, de, id, server);
+	sprintf(info, "%s de: %p, id: %d, server: %d, offset: %d, size: %d", syscall, de, id, server, offset, size);
 	nrf_print_info(info);
 
 	char buf[BUFFER_SIZE];
 	int send_num = 0;
 	if (strcmp(syscall, "readdir") == 0) send_num = pack_readdir(buf, dir);
 	else if (strcmp(syscall, "closedir") == 0) send_num = pack_closedir(buf, dir);
+	else if (strcmp(syscall, "write") == 0) send_num = pack_write(buf, open_files[id]->fds[server], offset, size, write_buf);
+	else if (strcmp(syscall, "read") == 0) send_num = pack_read(buf, open_files[id]->fds[server], offset, size);
 	else if (strcmp(syscall, "close") == 0) send_num = pack_close(buf, open_files[id]->fds[server]);
+	else if (strcmp(syscall, "lstat") == 0) send_num = pack_lstat(buf, path);
 
 	int sent_num = send_to_server(buf, send_num, server);
 	if (sent_num == -1)
@@ -483,12 +507,59 @@ static int function_on_one_server(const char *syscall, DIR **dir, struct dirent 
 		}
 	}
 
-	int rv = unpack(syscall, buf, open_files[id], server, NULL, dir, de);
+	int rv = unpack(syscall, NULL, buf, open_files[id], server, stbuf, dir, de);
+
+	if (rv > 0 && strcmp(syscall, "read") == 0)
+	{
+		rv = read(server_fds[server], read_buf, size);
+	}
+
 	return rv;
 }
 
-static int pread_on_server(int open_fd, char *read_buf, size_t size, off_t offset, int server)
+static void hash(char *xor, char *read_buf, int size)
 {
+	int i = 0;
+	for (; i < size; i++)
+		xor[i] ^= read_buf[i];
+}
+
+static int xor_stripe(int id, int stripe)
+{
+	int xor_server = servers_count - (stripe % servers_count) - 1;
+	char read_buf[CHUNK_SIZE];
+	char xor[CHUNK_SIZE];
+	memset(xor, 0, CHUNK_SIZE);
+	int i = 0;
+
+	struct open_file *of = init_open_file();
+	int res = setter_function_on_server("open", open_files[id]->path, "", 0, O_RDONLY, of, 0, NULL);
+
+	printf("open res: %d\n", res);
+
+	for(; i < servers_count; i++)
+	{
+		if (i != xor_server)
+		{
+			memset(read_buf, 0, CHUNK_SIZE);
+			res = function_on_one_server("read", NULL, NULL, of->id, i, stripe * CHUNK_SIZE, CHUNK_SIZE, NULL, read_buf, NULL, NULL);
+
+			printf("read_buf: %s\n", read_buf);
+			printf("res %d\n", res);
+
+			hash(xor, read_buf, res);
+		}
+	}
+
+	for (i = 0; i < servers_count; i++)
+		if (of != NULL && of->fds[i] != UNOPENED)
+			function_on_one_server("close", NULL, NULL, of->id, i, 0, 0, NULL, NULL, NULL, NULL);
+
+	return function_on_one_server("write", NULL, NULL, id, xor_server, stripe * CHUNK_SIZE, CHUNK_SIZE, xor, NULL, NULL, NULL);
+}
+
+// static int pread_on_server(int open_fd, char *read_buf, size_t size, off_t offset, int server)
+// {
 	// char buf[1024];
 	// sprintf(buf, "5%s", "pread");
 	// memcpy(buf + 7, &open_fd, sizeof(int));
@@ -519,11 +590,11 @@ static int pread_on_server(int open_fd, char *read_buf, size_t size, off_t offse
 	// }
 
 	// return rv;
-	return 0;
-}
+// 	return 0;
+// }
 
-static int pwrite_on_server(const char *path, struct open_file *of, const char *write_buf, size_t size, off_t offset)
-{
+// static int pwrite_on_server(const char *path, struct open_file *of, const char *write_buf, size_t size, off_t offset)
+// {
 	// char buf[1024];
 	// sprintf(buf, "5%s", "pwrite");
 	// memcpy(buf + 8, path, strlen(path) + 1);
@@ -571,8 +642,8 @@ static int pwrite_on_server(const char *path, struct open_file *of, const char *
 	// }
 
 	// return rv_1;
-	return 0;
-}
+	// return 0;
+// }
 
 static int truncate_on_server(const char *path, off_t size)
 {
@@ -618,8 +689,23 @@ static int raid_5_unlink(const char *path);
 static int raid_5_getattr(const char *path, struct stat *stbuf)
 {
 	print2("getattr", path);
-	int server;
-	if (getter_function_on_server("lstat", path, 0, NULL, 0, NULL, 0, stbuf, &server) == -1) return -errno;
+	int res;
+	int i = 0;
+	off_t size = 0;
+	for (; i < servers_count; i++)
+	{
+		res = function_on_one_server("lstat", NULL, NULL, 0, i, 0, 0, NULL, NULL, stbuf, path);
+		if (res == -1) return -errno;
+		if (S_ISREG(stbuf->st_mode))
+		{
+			stbuf->st_size -= ((stbuf->st_size/CHUNK_SIZE + i)/servers_count)*CHUNK_SIZE;
+			size += stbuf->st_size;
+		}
+		else size = stbuf->st_size;
+	}
+	stbuf->st_size = size;
+
+	// if (getter_function_on_server("lstat", path, 0, NULL, 0, NULL, 0, stbuf, &server) == -1) return -errno;
 	return 0;
 }
 
@@ -659,7 +745,7 @@ static int raid_5_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 	int server;
 	if (getter_function_on_server("opendir", path, 0, &dp, 0, NULL, 0, NULL, &server) == -1) return -errno;
 
-	while (function_on_one_server("readdir", &dp, de, 0, server) != -1)
+	while (function_on_one_server("readdir", &dp, de, 0, server, 0, 0, NULL, NULL, NULL, NULL) != -1)
 	{
 		struct stat st;
 		memset(&st, 0, sizeof(st));
@@ -671,7 +757,7 @@ static int raid_5_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 	}
 	free(de);
 
-	function_on_one_server("closedir", &dp, NULL, 0, server);
+	function_on_one_server("closedir", &dp, NULL, 0, server, 0, 0, NULL, NULL, NULL, NULL);
 	return 0;
 }
 
@@ -703,11 +789,11 @@ static int raid_5_open(const char *path, struct fuse_file_info *fi)
 	
 	struct open_file *of = init_open_file();
 	int res;
-	int server;
-	if (fi->flags & (O_WRONLY | O_CREAT))
-		res = setter_function_on_server("open", path, "", 0, fi->flags, of, 0, NULL);
-	else
-		res = getter_function_on_server("open", path, 0, NULL, fi->flags, of, 0, NULL, &server);
+	// int server;
+	// if (fi->flags & (O_WRONLY | O_CREAT))
+	res = setter_function_on_server("open", path, "", 0, fi->flags, of, 0, NULL);
+	// else
+	// 	res = getter_function_on_server("open", path, 0, NULL, fi->flags, of, 0, NULL, &server);
 	fi->fh = res;
 
 	print_open_files();
@@ -722,28 +808,43 @@ static int raid_5_read(const char *path, char *buf, size_t size, off_t offset,
 	print2("read", path);
 
 	(void) fi;
-	int res;
+	int res = 0;
 
 	struct open_file *of = open_files[fi->fh];
 	if (of == NULL) return -1;
 
 	print_open_files();
 
-	int open_fd;
+	int chunk_n = offset / CHUNK_SIZE;
+	int local_offset = offset % CHUNK_SIZE;
+	int local_size = CHUNK_SIZE - local_offset;
 	int server;
-
-	int i = 0;
-	for (; server_fds[i] != UNSET_FD || i != MAX_SERVERS; i++){
-		if (of->fds[i] >= 0){
-			server = i;
-			open_fd = of->fds[i];
-			break;
-		}
+	int stripe = -1;
+	int temp_res;
+	while (size > local_size)
+	{
+		server = chunk_n % servers_count;
+		stripe = chunk_n / (servers_count - 1);
+		temp_res = function_on_one_server("read", NULL, NULL, fi->fh, server, (stripe * CHUNK_SIZE) + local_offset, local_size, NULL, buf, NULL, NULL);
+		printf("\033[30;1mBUFFER:\n%s\033[0m\n", buf);
+		printf("res: %d\n", res);
+		if (temp_res == -1) return -errno;
+		if (temp_res == 0) return res;
+		res += temp_res;
+		size -= local_size;
+		buf += local_size;
+		local_size = CHUNK_SIZE;
+		chunk_n++;
+		local_offset = 0;
 	}
-
-	res = pread_on_server(open_fd, buf, size, offset, server);
-	if (res == -1) res = -errno;
-
+	server = chunk_n % servers_count;
+	stripe = chunk_n / (servers_count - 1);
+	temp_res = function_on_one_server("read", NULL, NULL, fi->fh, server, (stripe * CHUNK_SIZE) + local_offset, size, NULL, buf, NULL, NULL);
+	printf("\033[30;1mBUFFER:\n%s\033[0m\n", buf);
+	if (temp_res == -1) return -errno;
+	if (temp_res == 0) return res;
+	res += temp_res;
+	printf("res: %d\n", res);
 	return res;
 }
 
@@ -759,10 +860,38 @@ static int raid_5_write(const char *path, const char *buf, size_t size,
 
 	print_open_files();
 
-	res = pwrite_on_server(path, of, buf, size, offset);
-	if (res == -1) res = -errno;
+	int chunk_n = offset / CHUNK_SIZE;
+	int local_offset = offset % CHUNK_SIZE;
+	int local_size = CHUNK_SIZE - local_offset;
+	int server;
+	int stripe = -1;
+	int last_stripe = -1;
+	while (size > local_size)
+	{
+		server = chunk_n % servers_count;
+		last_stripe = stripe;
+		stripe = chunk_n / (servers_count - 1);
+		if (stripe > last_stripe && last_stripe != -1)
+			if (xor_stripe(fi->fh, last_stripe) == -1) return -errno;
+		res = function_on_one_server("write", NULL, NULL, fi->fh, server, (stripe * CHUNK_SIZE) + local_offset, local_size, buf, NULL, NULL, NULL);
+		if (res == -1) return -errno;
+		size -= local_size;
+		buf += local_size;
+		local_size = CHUNK_SIZE;
+		chunk_n++;
+		local_offset = 0;
+	}
+	server = chunk_n % servers_count;
+	last_stripe = stripe;
+	stripe = chunk_n / (servers_count - 1);
+	if (stripe > last_stripe && last_stripe != -1)
+		if (xor_stripe(fi->fh, last_stripe) == -1) return -errno;
+	res = function_on_one_server("write", NULL, NULL, fi->fh, server, (stripe * CHUNK_SIZE) + local_offset, size, buf, NULL, NULL, NULL);
+	if (stripe > last_stripe && stripe != -1)
+		if (xor_stripe(fi->fh, stripe) == -1) return -errno;
 
-	return res;
+	if (res == -1) return -errno;
+	return size;
 }
 
 static int raid_5_truncate(const char *path, off_t size)
@@ -780,7 +909,7 @@ static int raid_5_release(const char *path, struct fuse_file_info *fi)
 	int i = 0;
 	for (; i < servers_count; i++)
 		if (open_files[fi->fh] != NULL && open_files[fi->fh]->fds[i] != UNOPENED)
-			function_on_one_server("close", NULL, NULL, fi->fh, i);
+			function_on_one_server("close", NULL, NULL, fi->fh, i, 0, 0, NULL, NULL, NULL, NULL);
 
 	print_open_files();
 

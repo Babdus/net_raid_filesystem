@@ -555,6 +555,55 @@ int call_raid_1_function(int client_fd, char *buf)
 		memcpy(buf + sizeof(int), &errno, sizeof(int));
 		return sizeof(int) * 2;
 	}
+	else if (strcmp(buf, "write") == 0)
+	{
+		char write_buf[BUF_SIZE];
+
+		int fd;
+		int offset;
+		int size;
+		memcpy(&fd, buf + 6, sizeof(int));
+		memcpy(&offset, buf + 6 + sizeof(int), sizeof(int));
+		memcpy(&size, buf + 6 + sizeof(int) * 2, sizeof(int));
+
+		printf("fd %d, offset %d, size %d\n", fd, offset, size);
+
+		memcpy(write_buf, buf + 6 + sizeof(int) * 3, size);
+
+		int rv = pwrite(fd, write_buf, size, offset);
+
+		buf--;
+
+		memcpy(buf, &rv, sizeof(int));
+		memcpy(buf + sizeof(int), &errno, sizeof(int));
+		return sizeof(int) * 2;
+	}
+	else if (strcmp(buf, "read") == 0)
+	{
+		char read_buf[BUF_SIZE];
+
+		int fd;
+		int offset;
+		int size;
+		memcpy(&fd, buf + 5, sizeof(int));
+		memcpy(&offset, buf + 5 + sizeof(int), sizeof(int));
+		memcpy(&size, buf + 5 + sizeof(int) * 2, sizeof(int));
+
+		printf("fd %d, offset %d, size %d\n", fd, offset, size);
+
+		int rv = pread(fd, read_buf, size, offset);
+
+		buf--;
+
+		memcpy(buf, &rv, sizeof(int));
+		memcpy(buf + sizeof(int), &errno, sizeof(int));
+		if (rv > 0)
+		{
+			memcpy(buf + sizeof(int) * 2, read_buf, rv);
+			return sizeof(int) * 2 + rv;
+		}
+		return sizeof(int) * 2;
+	}
 	else if (strcmp(buf, "truncate") == 0)
 	{
 		char *path = malloc(PATH_LEN);
