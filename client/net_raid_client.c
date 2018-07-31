@@ -65,11 +65,13 @@ void print_config(struct config *config)
 static void mount(struct storage *storage)
 {	
 
-	int argc = 3;
+	int argc = 5;
 	char *argv[argc];
 	argv[0] = strdup("net_raid_client");
 	argv[1] = strdup("-f");
-	argv[2] = strdup(storage->mountpoint);
+	argv[2] = strdup("-o");
+	argv[3] = strdup("sync_read");
+	argv[4] = strdup(storage->mountpoint);
 
 	int status = -1;
 	if(storage->raid == 1)
@@ -90,8 +92,8 @@ static void mount(struct storage *storage)
 
 	if (status == 0)
 	{
-		char *info_msg = (char*)malloc(strlen(argv[2]) + 31);
-		sprintf(info_msg, "Mounted directory '%s'", argv[2]);
+		char *info_msg = (char*)malloc(strlen(argv[4]) + 31);
+		sprintf(info_msg, "Mounted directory '%s'", argv[4]);
 		nrf_print_success(info_msg);
 		free(info_msg);
 	}
@@ -100,30 +102,8 @@ static void mount(struct storage *storage)
 	free(argv[0]);
 	free(argv[1]);
 	free(argv[2]);
-
-	// char buf[1024];
-
-	// int server_fds[storage->server_n];
-	// struct server *server = storage->servers;
-	// int i = 0;
-	// while (server != NULL)
-	// {
-	// 	nrf_print_info("Server ready to connect");
-	// 	int fd = connect_to_server(server);
-	// 	server_fds[i] = fd;
-	// 	server = server->next_server;
-	// 	i++;
-	// }
-	// for (i--; i >= 0; i--)
-	// {
-	// 	if(server_fds[i] > -1){
-	// 		write(server_fds[i], "qwe", 4);
- // 	   	read(server_fds[i], &buf, 4);
- // 	   	sleep(4);
- // 			printf("(%d) This is what we have: %s\n", i, buf);
-	// 	}
-	// }
-
+	free(argv[3]);
+	free(argv[4]);
 }
 
 int main (int argc, char **argv)
@@ -141,17 +121,17 @@ int main (int argc, char **argv)
 		// print_config(config);
 		struct storage *storage = global_config->storages;
 		while (storage != NULL){
-			mount(storage);
-			// switch(fork()) {
-			// 	case -1:
-			// 		exit(100);
-			// 	case 0:
-			// 		mount(storage);
-			// 		exit(0);
-			// 	default:
-			// 		storage = storage->next_storage;
-			// }
-			storage = storage->next_storage;
+			// mount(storage);
+			switch(fork()) {
+				case -1:
+					exit(100);
+				case 0:
+					mount(storage);
+					exit(0);
+				default:
+					storage = storage->next_storage;
+			}
+			// storage = storage->next_storage;
 		}
 		return 0;
 	}

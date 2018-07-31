@@ -476,10 +476,11 @@ int call_raid_1_function(int client_fd, char *buf)
 
 		write(client_fd, buf, sizeof(int) * 2);
 
+		char *temp_buf = read_buf;
 		while (rv > 0)
 		{
-			memcpy(buf, read_buf, BUF_SIZE);
-			read_buf += BUF_SIZE;
+			memcpy(buf, temp_buf, BUF_SIZE);
+			temp_buf += BUF_SIZE;
 			rv -= BUF_SIZE;
 
 			int write_size = write(client_fd, buf, BUF_SIZE);
@@ -618,6 +619,8 @@ int call_raid_1_function(int client_fd, char *buf)
 		memcpy(&size, buf + 10 + strlen(buf + 9), sizeof(off_t));
 
 		int rv = truncate(path, size);
+
+		printf("rv %d, errno %d, size %d\n", rv, errno, (int)size);
 
 		free(path);
 

@@ -297,6 +297,14 @@ static int pack_read(char *buf, int fd, int offset, int size)
 	return 6 + sizeof(int) * 3;
 }
 
+static int pack_truncate(char *buf, const char *path, off_t size)
+{
+	sprintf(buf, "5%s", "truncate");
+	memcpy(buf + 10, path, strlen(path) + 1);
+	memcpy(buf + 11 + strlen(path), &size, sizeof(off_t));
+	return 11 + strlen(path) + sizeof(off_t);
+}
+
 static int pack_close(char *buf, int fd)
 {
 	sprintf(buf, "5%s", "close");
@@ -473,7 +481,7 @@ static int function_on_one_server(const char *syscall, DIR **dir, struct dirent 
 {
 	printf("oner start\n");
 	char info[1024];
-	sprintf(info, "%s de: %p, id: %d, server: %d, offset: %d, size: %d", syscall, de, id, server, offset, size);
+	sprintf(info, "%s de: %p, id: %d, server: %d, offset: %d, size: %d, path: %s", syscall, de, id, server, offset, size, path);
 	nrf_print_info(info);
 
 	char buf[BUFFER_SIZE];
@@ -484,6 +492,7 @@ static int function_on_one_server(const char *syscall, DIR **dir, struct dirent 
 	else if (strcmp(syscall, "read") == 0) send_num = pack_read(buf, open_files[id]->fds[server], offset, size);
 	else if (strcmp(syscall, "close") == 0) send_num = pack_close(buf, open_files[id]->fds[server]);
 	else if (strcmp(syscall, "lstat") == 0) send_num = pack_lstat(buf, path);
+	else if (strcmp(syscall, "truncate") == 0) send_num = pack_truncate(buf, path, size);
 
 	int sent_num = send_to_server(buf, send_num, server);
 	if (sent_num == -1)
@@ -558,116 +567,6 @@ static int xor_stripe(int id, int stripe)
 	return function_on_one_server("write", NULL, NULL, id, xor_server, stripe * CHUNK_SIZE, CHUNK_SIZE, xor, NULL, NULL, NULL);
 }
 
-// static int pread_on_server(int open_fd, char *read_buf, size_t size, off_t offset, int server)
-// {
-	// char buf[1024];
-	// sprintf(buf, "5%s", "pread");
-	// memcpy(buf + 7, &open_fd, sizeof(int));
-	// memcpy(buf + 7 + sizeof(int), &size, sizeof(size_t));
-	// memcpy(buf + 7 + sizeof(int) + sizeof(size_t), &offset, sizeof(off_t));
-
-	// if (server == 0) server = GET;
-	// int status = send_to_server(buf, 7 + sizeof(int) + sizeof(size_t) + sizeof(off_t), server);
-
-	// if (status == -1) return -1;
-
-	// int fd;
-	// if (status == 2) fd = server_fd_2;
-	// else fd = server_fd_1;
-
-	// if (read(fd, buf, sizeof(int) * 2) == -1) return -1;
-
-	// int rv;
-	// memcpy(&rv, buf, sizeof(int));
-	// memcpy(&errno, buf + sizeof(int), sizeof(int));
-	// int num = rv;
-	// while (num > 0)
-	// {
-	// 	read(fd, buf, 1024);
-	// 	num -= 1024;
-	// 	memcpy(read_buf, buf, 1024);
-	// 	read_buf += 1024;
-	// }
-
-	// return rv;
-// 	return 0;
-// }
-
-// static int pwrite_on_server(const char *path, struct open_file *of, const char *write_buf, size_t size, off_t offset)
-// {
-	// char buf[1024];
-	// sprintf(buf, "5%s", "pwrite");
-	// memcpy(buf + 8, path, strlen(path) + 1);
-	// memcpy(buf + 9 + strlen(path), &of->fd_1, sizeof(int));
-	// memcpy(buf + 9 + strlen(path) + sizeof(int), &size, sizeof(size_t));
-	// memcpy(buf + 9 + strlen(path) + sizeof(int) + sizeof(size_t), &offset, sizeof(off_t));
-
-	// int status_1 = send_to_server(buf, 9 + strlen(path) + sizeof(int) + sizeof(size_t) + sizeof(off_t), 1);
-
-	// if(status_1 < 0) return -1;
-
-	// memcpy(buf + 9 + strlen(path), &of->fd_2, sizeof(int));
-	// int status_2 = send_to_server(buf, 9 + strlen(path) + sizeof(int) + sizeof(size_t) + sizeof(off_t), 2);
-
-	// if(status_2 < 0) return -1;
-
-	// int int_size = (int)size;
-	// int status;
-
-	// while (int_size > 0)
-	// {
-	// 	printf("loop start\n");
-	// 	int write_size = 1024;
-	// 	if (int_size < 1024) write_size = int_size;
-	// 	memcpy(buf, write_buf, write_size);
-	// 	int_size -= 1024;
-	// 	status = send_to_server(buf, write_size, SET);
-	// 	if (status != 0) return -1;
-	// 	printf("loop end\n");
-	// }
-
-	// status_1 = read(server_fd_1, buf, sizeof(int) * 2);
-	// status_2 = read(server_fd_2, buf + sizeof(int) * 2, sizeof(int) * 2);
-
-	// if (status_1 < 0 || status_2 < 0) return -1;
-
-	// int rv_1, rv_2;
-	// memcpy(&rv_1, buf, sizeof(int));
-	// memcpy(&errno, buf + sizeof(int), sizeof(int));
-	// memcpy(&rv_2, buf + sizeof(int) * 2, sizeof(int));
-	// if (rv_2 < 0)
-	// {
-	// 	memcpy(&errno, buf + sizeof(int) * 3, sizeof(int));
-	// 	return rv_2;
-	// }
-
-	// return rv_1;
-	// return 0;
-// }
-
-static int truncate_on_server(const char *path, off_t size)
-{
-	// char buf[1024];
-	// sprintf(buf, "5%s", "truncate");
-	// memcpy(buf + 10, path, strlen(path) + 1);
-	// memcpy(buf + 11 + strlen(path), &size, sizeof(off_t));
-	// int status = send_to_server(buf, strlen(path) + 11 + sizeof(off_t), SET);
-
-	// if (status != 0) return -1;
-
-	// int status_1 = read(server_fd_1, buf, sizeof(int) * 2);
-	// int status_2 = read(server_fd_2, buf, sizeof(int) * 2);
-
-	// if (status_1 < 0 || status_2 < 0) return -1;
-
-	// int rv;
-	// memcpy(&rv, buf, sizeof(int));
-	// memcpy(&errno, buf + sizeof(int), sizeof(int));
-
-	// return rv;
-	return 0;
-}
-
 static int raid_5_getattr(const char *path, struct stat *stbuf);
 // static int raid_5_access(const char *path, int mask);
 static int raid_5_mknod(const char *path, mode_t mode, dev_t rdev);
@@ -708,14 +607,6 @@ static int raid_5_getattr(const char *path, struct stat *stbuf)
 	// if (getter_function_on_server("lstat", path, 0, NULL, 0, NULL, 0, stbuf, &server) == -1) return -errno;
 	return 0;
 }
-
-// static int raid_5_access(const char *path, int mask)
-// {
-// 	print2("access", path);
-// 	int server;
-// 	if (getter_function_on_server("access", path, mask, NULL, 0, NULL, 0, NULL, &server) == -1) return -errno;
-// 	return 0;
-// }
 
 static int raid_5_mknod(const char *path, mode_t mode, dev_t rdev)
 {
@@ -897,7 +788,46 @@ static int raid_5_write(const char *path, const char *buf, size_t size,
 static int raid_5_truncate(const char *path, off_t size)
 {
 	print2("truncate", path);
-	if (truncate_on_server(path, size) == -1) return -errno;
+
+	int res;
+	printf("\033[30;1msize %d\033[0m\n", (int)size);
+	int chunks = size / CHUNK_SIZE;
+	printf("\033[30;1mchunks %d\033[0m\n", chunks);
+	int reminder = size % CHUNK_SIZE;
+	printf("\033[30;1mreminder %d\033[0m\n", reminder);
+	int xor_stripe = chunks / (servers_count - 1);
+	printf("\033[30;1mxor_stripe %d\033[0m\n", xor_stripe);
+	int xor_server = servers_count - xor_stripe % servers_count - 1;
+	printf("\033[30;1mxor_server %d\033[0m\n", xor_server);
+	int is_larger = 0;
+	printf("\033[30;1mis_larger %d\033[0m\n", is_larger);
+	int last_chunk_server = chunks % servers_count;
+	printf("\033[30;1mlast_chunk_server %d\033[0m\n", last_chunk_server);
+	int i;
+	for (i = (xor_server - 1 + servers_count) % servers_count; i != xor_server; i = (i - 1 + servers_count) % servers_count){
+		printf("\033[30;1mi %d\033[0m\n", i);
+		if (i == last_chunk_server)
+		{
+			res = function_on_one_server("truncate", NULL, NULL, 0, i, 0, xor_stripe * CHUNK_SIZE + reminder, NULL, NULL, NULL, path);
+			if (res == -1) return -errno;
+			if ((i - 1 + servers_count) % servers_count == xor_server && reminder == 0) is_larger = 0;
+			else is_larger = 1;
+			continue;
+		}
+		if (is_larger == 0)
+		{
+			res = function_on_one_server("truncate", NULL, NULL, 0, i, 0, xor_stripe * CHUNK_SIZE, NULL, NULL, NULL, path);
+			if (res == -1) return -errno;
+		}
+		else
+		{
+			res = function_on_one_server("truncate", NULL, NULL, 0, i, 0, (xor_stripe + 1) * CHUNK_SIZE, NULL, NULL, NULL, path);
+			if (res == -1) return -errno;
+		}
+	}
+	printf("\033[30;1mis_larger %d\033[0m\n", is_larger);
+	res = function_on_one_server("truncate", NULL, NULL, 0, xor_server, 0, (xor_stripe + is_larger) * CHUNK_SIZE, NULL, NULL, NULL, path);
+	if (res == -1) return -errno;
 	return 0;
 }
 
