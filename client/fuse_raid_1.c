@@ -23,88 +23,6 @@ struct open_file {
 
 struct open_file *open_files[OPEN_FILES_NUM];
 
-static void print2(const char *syscall, const char *path)
-{
-	// err_file = fopen(global_config->err_log_path, "a");
-	char *info_msg = (char*)malloc(strlen(path) + strlen(syscall) + 28);
-	sprintf(info_msg, "raid_1_%s: Path is %s", syscall, path);
-	// fprintf(err_file, "[%s] %s\n", cur_time(), info_msg);
-	nrf_print_info(info_msg);
-	free(info_msg);
-	// fclose(err_file);
-}
-
-static void print2p(const char *syscall, void *pointer)
-{
-	char *info_msg = (char*)malloc(strlen(syscall) + 41);
-	sprintf(info_msg, "raid_1_%s: Pointer is %p", syscall, pointer);
-	nrf_print_info(info_msg);
-	free(info_msg);
-}
-
-static void print3(const char *syscall, const char *from, const char *to)
-{
-	// err_file = fopen(global_config->err_log_path, "a");
-	char *info_msg = (char*)malloc(strlen(from) + strlen(to) + strlen(syscall) + 29);
-	sprintf(info_msg, "raid_1_%s: From %s to %s", syscall, from, to);
-	// fprintf(err_file, "[%s] %s\n", cur_time(), info_msg);
-	nrf_print_info(info_msg);
-	free(info_msg);
-	// fclose(err_file);
-}
-
-// static void print2i(const char *syscall, int num)
-// {
-// 	// err_file = fopen(global_config->err_log_path, "a");
-// 	char *info_msg = (char*)malloc(strlen(syscall) + 41);
-// 	sprintf(info_msg, "raid_1_%s: Number is %d", syscall, num);
-// 	// fprintf(err_file, "[%s] %s\n", cur_time(), info_msg);
-// 	nrf_print_value(info_msg);
-// 	free(info_msg);
-// 	// fclose(err_file);
-// }
-
-// static void print4cssi(char raid, const char *syscall, const char *text, int num)
-// {
-// 	err_file = fopen(global_config->err_log_path, "a");
-// 	char *info_msg = (char*)malloc(strlen(syscall) + 41);
-// 	sprintf(info_msg, "raid_%c_%s: %s: %d", raid, syscall, text, num);
-// 	fprintf(err_file, "[%s] %s\n", cur_time(), info_msg);
-// 	nrf_print_value(info_msg);
-// 	free(info_msg);
-// 	fclose(err_file);
-// }
-
-static void print5csssi(char raid, const char *syscall, const char *text, const char *text_2, int num)
-{
-	// err_file = fopen(global_config->err_log_path, "a");
-	char *info_msg = (char*)malloc(strlen(syscall) + strlen(text) + strlen(text_2) + 42);
-	sprintf(info_msg, "raid_%c_%s: %s: %s:%d", raid, syscall, text, text_2, num);
-	// fprintf(err_file, "[%s] %s\n", cur_time(), info_msg);
-	nrf_print_value(info_msg);
-	free(info_msg);
-	// fclose(err_file);
-}
-
-static void print_open_files()
-{
-	int i = 0;
-	int null_count = 0;
-	for (; i < OPEN_FILES_NUM; i++)
-	{
-		if (open_files[i] != NULL)
-		{
-			if (null_count > 0) printf("%d NULLs\n", null_count);
-			null_count = 0;
-			printf("path: %s\n", open_files[i]->path);
-			printf("fd_1: %d\n", open_files[i]->fd_1);
-			printf("fd_2: %d\n", open_files[i]->fd_2);
-		}
-		else null_count++;
-	}
-	if (null_count > 0) printf("%d NULLs\n", null_count);
-}
-
 static void init_open_files()
 {
 	int i = 0;
@@ -156,8 +74,7 @@ static int send_to_server(char buf[], size_t len, int mode)
 		status_1 = 0;
 		while (write(server_fd_1, buf, len) == -1)
 		{
-			if ((server_fd_1 = connect_to_server(global_storage->servers)) == -1){
-				print5csssi('1', buf+1, "cannot connect to server 1", global_storage->servers->ip, global_storage->servers->port);
+			if ((server_fd_1 = connect_to_server(global_storage->servers, global_storage)) == -1){
 				status_1 = -1;
 				break;
 			}
@@ -166,22 +83,17 @@ static int send_to_server(char buf[], size_t len, int mode)
 		if ((mode == GET || mode == 1) && status_1 == 0) return 1;
 	}
 
-	// print4cssi('1', buf+1, "sent to server 1 status", status_1);
-
 	if (mode != 1)
 	{
 		status_2 = 0;
 		while (write(server_fd_2, buf, len) == -1)
 		{
-			if ((server_fd_2 = connect_to_server(global_storage->servers->next_server)) == -1){
-				print5csssi('1', buf+1, "cannot connect to server 2", global_storage->servers->next_server->ip, global_storage->servers->next_server->port);	
+			if ((server_fd_2 = connect_to_server(global_storage->servers->next_server, global_storage)) == -1){
 				status_2 = -1;
 				break;
 			}
 		}
 	}
-
-	// print4cssi('1', buf+1, "sent to server 2 status:", status_2);
 
 	if (status_2 == 0)
 	{
@@ -326,20 +238,11 @@ static DIR *opendir_on_server(const char *path)
 	memcpy(&errno, buf + sizeof(int), sizeof(int));
 	memcpy(&dir, buf + sizeof(int) * 2, sizeof(DIR *));
 
-	// err_file = fopen(global_config->err_log_path, "a");
-	// fprintf(err_file, "opendir_on_server: Dir: %p\n", dir);
-	// fclose(err_file);
-
 	return dir;
 }
 
 static struct dirent *readdir_on_server(DIR *dir)
 {
-	// err_file = fopen(global_config->err_log_path, "a");
-	// fprintf(err_file, "readdir_on_server: Dir: %p\n", dir);
-
-	print2p("readdir_on_server", dir);
-
 	char buf[1024];
 	sprintf(buf, "1%s", "readdir");
 	memcpy(buf + 9, &dir, sizeof(DIR *));
@@ -365,18 +268,11 @@ static struct dirent *readdir_on_server(DIR *dir)
 	struct dirent *entry = malloc(sizeof(struct dirent));
 	memcpy(entry, buf + sizeof(int) * 2, sizeof(struct dirent));
 
-	// fprintf(err_file, "readdir_on_server: Entry { d_ino: %zu, d_type: %d, d_name: %s }\n", entry->d_ino, entry->d_type, entry->d_name);
-	// fclose(err_file);
-
 	return entry;
 }
 
 static int closedir_on_server(DIR *dir)
 {
-	// err_file = fopen(global_config->err_log_path, "a");
-	// fprintf(err_file, "closedir_on_server: Dir: %p\n", dir);
-	// fclose(err_file);
-
 	char buf[1024];
 	sprintf(buf, "1%s", "closedir");
 	memcpy(buf + 10, &dir, sizeof(DIR *));
@@ -496,8 +392,6 @@ static int pread_on_server(int open_fd, char *read_buf, size_t size, off_t offse
 	memcpy(&errno, buf + sizeof(int), sizeof(int));
 	int num = rv;
 
-	printf("num: %d\n", num);
-
 	while (num > 0)
 	{
 		int read_size;
@@ -505,10 +399,7 @@ static int pread_on_server(int open_fd, char *read_buf, size_t size, off_t offse
 		num -= read_size;
 		memcpy(read_buf, buf, read_size);
 		read_buf += read_size;
-		printf("read_size: %d, num: %d\n", read_size, num);
 	}
-
-	printf("end\n");
 
 	return rv;
 }
@@ -534,19 +425,14 @@ static int pwrite_on_server(const char *path, struct open_file *of, const char *
 	int int_size = (int)size;
 	int status;
 
-	printf("int_size: %d\n", int_size);
-
 	while (int_size > 0)
 	{
-		printf("loop start\n");
 		int write_size = 1024;
 		if (int_size < 1024) write_size = int_size;
 		memcpy(buf, write_buf, write_size);
 		int_size -= 1024;
 		status = send_to_server(buf, write_size, SET);
 		if (status != 0) return -1;
-		printf("int_size: %d\n", int_size);
-		printf("loop end\n");
 	}
 
 	status_1 = read(server_fd_1, buf, sizeof(int) * 2);
@@ -675,28 +561,24 @@ static int raid_1_unlink(const char *path);
 
 static int raid_1_getattr(const char *path, struct stat *stbuf)
 {
-	print2("getattr", path);
 	if (lstat_on_server(path, stbuf) == -1) return -errno;
 	return 0;
 }
 
 static int raid_1_access(const char *path, int mask)
 {
-	print2("access", path);
 	if (access_on_server(path, mask) == -1) return -errno;
 	return 0;
 }
 
 static int raid_1_mknod(const char *path, mode_t mode, dev_t rdev)
 {
-	print2("mknod", path);
 	if (mknod_on_server(path, mode, rdev) == -1) return -errno;
 	return 0;
 }
 
 static int raid_1_mkdir(const char *path, mode_t mode)
 {
-	print2("mkdir", path);
 	if (mkdir_on_server(path, mode) == -1) return -errno;
 	return 0;
 }
@@ -704,8 +586,6 @@ static int raid_1_mkdir(const char *path, mode_t mode)
 static int raid_1_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 		       off_t offset, struct fuse_file_info *fi)
 {
-	print2("readdir", path);
-
 	DIR *dp;
 	struct dirent *de;
 
@@ -713,8 +593,6 @@ static int raid_1_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 	(void) fi;
 
 	if ((dp = opendir_on_server(path)) == NULL) return -errno;
-
-	print2p("raid_1_readdir", dp);
 
 	while ((de = readdir_on_server(dp)) != NULL)
 	{
@@ -733,18 +611,14 @@ static int raid_1_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 
 static int raid_1_rmdir(const char *path)
 {
-	print2("rmdir", path);
 	if (rmdir_on_server(path) == -1) return -errno;
 	return 0;
 }
 
 static int raid_1_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 {
-	print2("create", path);
 	struct open_file *of = open_on_server(path, fi->flags, mode);
 	if (of == NULL) return -errno;
-
-	print_open_files();
 
 	if (of->fd_1 >= 0 && of->fd_2 >= 0) return 0;
 	if (of->fd_1 == FILE_DAMAGED && of->fd_2 != FILE_DAMAGED) copy_file(of, 1, 2);
@@ -757,11 +631,8 @@ static int raid_1_create(const char *path, mode_t mode, struct fuse_file_info *f
 
 static int raid_1_open(const char *path, struct fuse_file_info *fi)
 {
-	print2("open", path);
 	struct open_file *of = open_on_server(path, fi->flags, 0000);
 	if (of == NULL) return -errno;
-
-	print_open_files();
 
 	if (of->fd_1 >= 0 && of->fd_2 >= 0) return 0;
 	if (of->fd_1 >= 0 && of->fd_2 == UNOPENED) return 0;
@@ -782,19 +653,12 @@ static int raid_1_open(const char *path, struct fuse_file_info *fi)
 static int raid_1_read(const char *path, char *buf, size_t size, off_t offset,
 		    struct fuse_file_info *fi)
 {
-	print2("read", path);
-
 	(void) fi;
 
-	// int fd;
 	int res;
-	// fd = open_on_server(path, O_RDONLY, 0000);
-	// if (fd == -1) return -errno;
 
 	struct open_file *of = find_fd(path);
 	if (of == NULL) return -1;
-
-	print_open_files();
 
 	int open_fd;
 	int server;
@@ -812,43 +676,31 @@ static int raid_1_read(const char *path, char *buf, size_t size, off_t offset,
 	res = pread_on_server(open_fd, buf, size, offset, server);
 	if (res == -1) res = -errno;
 
-	// close_on_server(fd);
 	return res;
 }
 
 static int raid_1_write(const char *path, const char *buf, size_t size,
 		     off_t offset, struct fuse_file_info *fi)
 {
-	print2("write", path);
-
 	int res;
 
 	struct open_file *of = find_fd(path);
 	if (of == NULL) return -1;
 
-	print_open_files();
-
-	// fd = open_on_server(path, O_WRONLY, 0000);
-	// if (fd == -1) return -errno;
-
 	res = pwrite_on_server(path, of, buf, size, offset);
 	if (res == -1) res = -errno;
 
-	// close_on_server(fd);
 	return res;
 }
 
 static int raid_1_truncate(const char *path, off_t size)
 {
-	print2("truncate", path);
 	if (truncate_on_server(path, size) == -1) return -errno;
 	return 0;
 }
 
 static int raid_1_release(const char *path, struct fuse_file_info *fi)
 {
-	print2("release", path);
-
 	(void) fi;
 
 	struct open_file *of = find_fd(path);
@@ -863,213 +715,52 @@ static int raid_1_release(const char *path, struct fuse_file_info *fi)
 	free(of->path);
 	open_files[of->n] = NULL;
 
-	print_open_files();
-
 	return 0;
 }
 
 static int raid_1_rename(const char *from, const char *to)
 {
-	print3("rename", from, to);
 	if (rename_on_server(from, to) == -1) return -errno;
 	return 0;
 }
 
 static int raid_1_unlink(const char *path)
 {
-	print2("unlink", path);
 	if (unlink_on_server(path) == -1) return -errno;
-	return 0;
-}
-
-
-
-static int raid_1_symlink(const char *from, const char *to)
-{
-	// print3("symlink", from, to);
-
-	// int res;
-
-	// res = symlink(from, to);
-	// if (res == -1)
-	// 	return -errno;
-
-	return 0;
-}
-
-static int raid_1_link(const char *from, const char *to)
-{
-	// print3("link", from, to);
-
-	// int res;
-
-	// res = link(from, to);
-	// if (res == -1)
-	// 	return -errno;
-
-	return 0;
-}
-
-static int raid_1_chmod(const char *path, mode_t mode)
-{
-	print2("chmod", path);
-
-	// int res;
-
-	// res = chmod(path, mode);
-	// if (res == -1)
-	// 	return -errno;
-
-	return 0;
-}
-
-static int raid_1_chown(const char *path, uid_t uid, gid_t gid)
-{
-	print2("chown", path);
-
-	// int res;
-
-	// res = lchown(path, uid, gid);
-	// if (res == -1)
-	// 	return -errno;
-
 	return 0;
 }
 
 static int raid_1_utimens(const char *path, const struct timespec ts[2])
 {
-	print2("utimens", path);
-
-	// int res;
-	// struct timeval tv[2];
-
-	// tv[0].tv_sec = ts[0].tv_sec;
-	// tv[0].tv_usec = ts[0].tv_nsec / 1000;
-	// tv[1].tv_sec = ts[1].tv_sec;
-	// tv[1].tv_usec = ts[1].tv_nsec / 1000;
-
-	// res = utimes(path, tv);
-	// if (res == -1)
-	// 	return -errno;
-
-	return 0;
-}
-
-static int raid_1_statfs(const char *path, struct statvfs *stbuf)
-{
-	print2("statfs", path);
-
-	// int res;
-
-	// res = statvfs(path, stbuf);
-	// if (res == -1)
-	// 	return -errno;
-
-	return 0;
-}
-
-static int raid_1_fsync(const char *path, int isdatasync,
-		     struct fuse_file_info *fi)
-{
-	// print2("fsync", path);
-
-	/* Just a stub.	 This method is optional and can safely be left
-	   unimplemented */
-
-	(void) path;
-	(void) isdatasync;
-	(void) fi;
-	return 0;
-}
-
-static int
-raid_1_lock(const char *path, struct fuse_file_info *fi, 
-	 int cmd, struct flock *lock)
-{
-	// print2("lock", path);
-
-	// int fd;
-
-	// (void)fi;
-	
-	// fd = open(path, O_WRONLY);
-	// if (fd == -1)
-	// 	return -errno;
-
-	// if (cmd != F_GETLK && cmd != F_SETLK && cmd != F_SETLKW)
-	// 	return -EINVAL;
-
-	// if (fcntl(fd, cmd, lock) == -1)
-	// 	return -errno;
-
-	return 0;
-}
-
-static int raid_1_readlink(const char *path, char *buf, size_t size)
-{
-	// print2("readlink", path);
-
-	// int res;
-
-	// res = readlink(path, buf, size - 1);
-	// if (res == -1)
-	// 	return -errno;
-
-	// buf[res] = '\0';
 	return 0;
 }
 
 static struct fuse_operations raid_1_oper = {
 	.getattr	= raid_1_getattr,
 	.access		= raid_1_access,
-	.readlink	= raid_1_readlink,
 	.readdir	= raid_1_readdir,
 	.mknod		= raid_1_mknod,
 	.create     = raid_1_create,
 	.mkdir		= raid_1_mkdir,
-	.symlink	= raid_1_symlink,
 	.unlink		= raid_1_unlink,
 	.rmdir		= raid_1_rmdir,
 	.rename		= raid_1_rename,
-	.link		= raid_1_link,
-	.chmod		= raid_1_chmod,
-	.chown		= raid_1_chown,
 	.truncate	= raid_1_truncate,
 	.utimens	= raid_1_utimens,
 	.open		= raid_1_open,
 	.read		= raid_1_read,
 	.write		= raid_1_write,
-	.statfs		= raid_1_statfs,
 	.release	= raid_1_release,
-	.fsync		= raid_1_fsync,
-#ifdef HAVE_SETXATTR
-	.setxattr	= raid_1_setxattr,
-	.getxattr	= raid_1_getxattr,
-	.listxattr	= raid_1_listxattr,
-	.removexattr	= raid_1_removexattr,
-#endif
-	.lock		= raid_1_lock, 
 };
 
 int mount_raid_1(int argc, char *argv[], struct storage *storage)
 {
-	// FILE *f = fopen("/home/babdus/Documents/OS/nrf.log", "w");
-	// fclose(f);
 	global_storage = storage;
-
-	// err_file = fopen(global_config->err_log_path, "a");
 
 	init_open_files();
 
-	server_fd_1 = connect_to_server(global_storage->servers);
-	server_fd_2 = connect_to_server(global_storage->servers->next_server);
-
-	
-
-	// char *info_msg = (char*)malloc(strlen(argv[2]) + 32);
-	// sprintf(info_msg, "Mounting directory '%s'", argv[2]);
-	// nrf_print_info(info_msg);
-	// free(info_msg);
+	server_fd_1 = connect_to_server(global_storage->servers, global_storage);
+	server_fd_2 = connect_to_server(global_storage->servers->next_server, global_storage);
 
 	umask(0);
 	return fuse_main(argc, argv, &raid_1_oper, NULL);

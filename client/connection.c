@@ -1,11 +1,10 @@
 #include "connection.h"
 
-int connect_to_server(struct server *server)
+int connect_to_server(struct server *server, struct storage *storage)
 {
 	int server_fd;
 	struct sockaddr_in addr;
 	int ip;
-	char *info_msg;
 	
 	server_fd = socket(AF_INET, SOCK_STREAM, 0);
 
@@ -13,10 +12,7 @@ int connect_to_server(struct server *server)
 
 	if (status < 1)
 	{
-		info_msg = (char*)malloc(strlen(server->ip) + 30);
-		sprintf(info_msg, "Invalid ip address %s", server->ip);
-		nrf_print_error(info_msg);
-		free(info_msg);
+		nrf_print_error_x(global_config->err_log_path, storage->diskname, server->ip, server->port, "invalid ip address");
 	}
 
 	addr.sin_family = AF_INET;
@@ -27,17 +23,11 @@ int connect_to_server(struct server *server)
 
 	if (status < 0)
 	{
-		info_msg = (char*)malloc(strlen(server->ip) + 45);
-		sprintf(info_msg, "Can not connect to address %s:%d", server->ip, server->port);
-		nrf_print_error(info_msg);
-		free(info_msg);
+		nrf_print_error_x(global_config->err_log_path, storage->diskname, server->ip, server->port, "can not connect to server");
 		return -1;
 	}
 
-	info_msg = (char*)malloc(strlen(server->ip) + 38);
-	sprintf(info_msg, "Server %s:%d is connected", server->ip, server->port);
-	nrf_print_success(info_msg);
-	free(info_msg);
+	nrf_print_success_x(global_config->err_log_path, storage->diskname, server->ip, server->port, "server is connected");
 
 	return server_fd;
 }

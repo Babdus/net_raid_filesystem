@@ -19,6 +19,8 @@
 #include <time.h>
 #include <sys/time.h>
 
+void nrf_print_error_x(char *err_path, char *name, char *ip, int port, const char *msg);
+void nrf_print_success_x(char *err_path, char *name, char *ip, int port, const char *msg);
 void nrf_print_error(const char *);
 void nrf_print_warning(const char *);
 void nrf_print_note(const char *);

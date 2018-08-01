@@ -170,6 +170,26 @@ char *cur_time(char *buf)
 	return buf;
 }
 
+void nrf_print_success_x(char *err_path, char *name, char *ip, int port, const char *msg)
+{
+	FILE *err = fopen(err_path, "a");
+	char *buf = malloc(64);
+	fprintf(err, "\033[32;1m(NRF)[%s] Success: %s: %s:%d %s\033[0m\n", cur_time(buf), name, ip, port, msg);
+	printf("\033[32;1m(NRF)\033[0m\033[32m[%s]\033[32;1m Success:\033[0m \033[32m%s: %s:%d %s\033[0m\n", cur_time(buf), name, ip, port, msg);
+	fclose(err);
+	free(buf);
+}
+
+void nrf_print_error_x(char *err_path, char *name, char *ip, int port, const char *msg)
+{
+	FILE *err = fopen(err_path, "a");
+	char *buf = malloc(64);
+	fprintf(err, "\033[31;1m(NRF)[%s]   Error: %s: %s:%d %s\033[0m\n", cur_time(buf), name, ip, port, msg);
+	printf("\033[31;1m(NRF)\033[0m\033[31m[%s]\033[31;1m   Error:\033[0m \033[31m%s: %s:%d %s\033[0m\n", cur_time(buf), name, ip, port, msg);
+	fclose(err);
+	free(buf);
+}
+
 void nrf_print_error(const char *msg)
 {
 	char *buf = malloc(64);

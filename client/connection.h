@@ -16,6 +16,6 @@
 #include "../nrf_print.h"
 #include "config_parser.h"
 
-int connect_to_server(struct server *);
+int connect_to_server(struct server *, struct storage *);
 
 #endif
