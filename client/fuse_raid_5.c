@@ -285,6 +285,7 @@ static int setter_function_on_server(const char *syscall, const char *path, cons
 				exit(143);
 			}
 			hotswap_server_num = i;
+			server_fds[i] = -1;
 			continue;
 		}
 		int rec_num = 0;
@@ -304,6 +305,7 @@ static int setter_function_on_server(const char *syscall, const char *path, cons
 					exit(143);
 				}
 				hotswap_server_num = i;
+				server_fds[i] = -1;
 				break;
 			}
 		}
@@ -358,6 +360,7 @@ static int getter_function_on_server(const char *syscall, const char *path, int 
 				exit(143);
 			}
 			hotswap_server_num = i;
+			server_fds[i] = -1;
 			continue;
 		}
 		int rec_num = 0;
@@ -377,6 +380,7 @@ static int getter_function_on_server(const char *syscall, const char *path, int 
 					exit(143);
 				}
 				hotswap_server_num = i;
+				server_fds[i] = -1;
 				break;
 			}
 		}
@@ -428,6 +432,7 @@ static int function_on_one_server(const char *syscall, DIR **dir, struct dirent 
 		if (rec_num <= 0)
 		{
 			hotswap(server);
+			server_fds[server] = -1;
 			return -1;
 		}
 	}
@@ -500,23 +505,35 @@ static int raid_5_getattr(const char *path, struct stat *stbuf)
 	int res;
 	int i = 0;
 	off_t size = 0;
+	off_t total_size = 0;
+	int not_connected = -1;
 	for (; i < servers_count; i++)
 	{
 		res = function_on_one_server("lstat", NULL, NULL, 0, i, 0, 0, NULL, NULL, stbuf, path);
+
+		printf("res: %d\n", res);
+
 		if (res == -1) return -errno;
+		if (res == SERVER_NOT_CONNECTED){
+			not_connected = i;
+			continue;
+		}
 		if (S_ISREG(stbuf->st_mode))
 		{
-			if (res == SERVER_NOT_CONNECTED)
-				size += CHUNK_SIZE;
-			else
-			{
-				stbuf->st_size -= ((stbuf->st_size/CHUNK_SIZE + i)/servers_count)*CHUNK_SIZE;
-				size += stbuf->st_size;
-			}
+			total_size += stbuf->st_size;
+			stbuf->st_size -= ((stbuf->st_size/CHUNK_SIZE + i)/servers_count)*CHUNK_SIZE;
+			size += stbuf->st_size;
 		}
 		else size = stbuf->st_size;
+		printf("size %lu\n", size);
 	}
 	stbuf->st_size = size;
+	if (not_connected > -1)
+	{
+		int one_server_size = ((total_size + (CHUNK_SIZE - 1) * (servers_count - 1)) / CHUNK_SIZE / (servers_count - 1)) * CHUNK_SIZE;
+		one_server_size -= ((one_server_size/CHUNK_SIZE + not_connected)/servers_count)*CHUNK_SIZE;
+		stbuf->st_size += one_server_size;
+	}
 
 	// if (getter_function_on_server("lstat", path, 0, NULL, 0, NULL, 0, stbuf, &server) == -1) return -errno;
 	return 0;
