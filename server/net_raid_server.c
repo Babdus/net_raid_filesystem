@@ -143,7 +143,7 @@ int check_file(const char *path)
 	if (size == 0) return 0;
 
 	char *checksum = malloc(HASH_SIZE);
-	int xattr = lgetxattr(path, "checksum", checksum, HASH_SIZE);
+	int xattr = lgetxattr(path, "user.checksum", checksum, HASH_SIZE);
 
 	if (xattr < 0) printf("error: %s\n", strerror(errno));
 
@@ -376,13 +376,18 @@ int call_raid_1_function(int client_fd, char *buf)
 
 		int rv = open(path, flags, mode);
 
-		// if (rv >= 0 && check_file(path) < 0) rv = FILE_DAMAGED;
-
 		print2i(buf, rv);
 
 		free(path);
 
 		buf--;
+
+		printf("buf[0]: %c\n", buf[0]);
+
+		if (buf[0] == '1' && rv >= 0 && check_file(path) < 0) rv = FILE_DAMAGED;
+
+		printf("rv: %d\n", rv);
+		
 		memcpy(buf, &rv, sizeof(int));
 		memcpy(buf + sizeof(int), &errno, sizeof(int));
 		return sizeof(int) * 2;
@@ -560,20 +565,50 @@ int call_raid_1_function(int client_fd, char *buf)
 	{
 		char write_buf[BUF_SIZE];
 
+		char *path = malloc(PATH_LEN);
+		path[0] = '\0';
+
+		strcat(path, global_path);
+		strcat(path, buf + 6);
+
 		int fd;
 		int offset;
 		int size;
-		memcpy(&fd, buf + 6, sizeof(int));
-		memcpy(&offset, buf + 6 + sizeof(int), sizeof(int));
-		memcpy(&size, buf + 6 + sizeof(int) * 2, sizeof(int));
+		memcpy(&fd, buf + 7 + strlen(buf + 6), sizeof(int));
+		memcpy(&offset, buf + 7 + strlen(buf + 6) + sizeof(int), sizeof(int));
+		memcpy(&size, buf + 7 + strlen(buf + 6) + sizeof(int) * 2, sizeof(int));
 
 		printf("fd %d, offset %d, size %d\n", fd, offset, size);
 
-		memcpy(write_buf, buf + 6 + sizeof(int) * 3, size);
+		memcpy(write_buf, buf + 7 + strlen(buf + 6) + sizeof(int) * 3, size);
 
 		int rv = pwrite(fd, write_buf, size, offset);
 
 		buf--;
+
+		if (buf[0] == '1')
+		{
+			struct stat st;
+			fstat(fd, &st);
+			int file_size = st.st_size;
+
+			printf("file_size %d\n", file_size);
+
+			int read_fd = open(path, O_RDONLY);
+			char *checksum = malloc(HASH_SIZE);
+			hash_file(checksum, read_fd, file_size);
+			close(read_fd);
+			
+			printf("checksum: ");
+			int i = 0;
+			for (;i < HASH_SIZE; i++)
+				printf("%x ", checksum[i]);
+			printf("\n");
+
+			int xattr = fsetxattr(fd, "user.checksum", checksum, HASH_SIZE, 0);
+
+			if (xattr < 0) printf("error: %s\n", strerror(errno));
+		}
 
 		memcpy(buf, &rv, sizeof(int));
 		memcpy(buf + sizeof(int), &errno, sizeof(int));
