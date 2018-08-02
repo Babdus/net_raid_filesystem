@@ -9,7 +9,7 @@
 
 იმისათვის, რომ ამ პროგრამამ დაამაუნთოს კონფიგურაციის ფაილში გადმოცემული დირექტორიები, საჭიროა ასევე აქამდე გაშვებული იყოს კონფიგურაციის ფაილშივე გადმოცემული სერვერები შემდეგი ფორმით:
 
-`./net_raid_server ip:port /path/to/storage/disk/`
+`./net_raid_server ip port /path/to/storage/disk/`
 
 მას შემდეგ რაც კლიენტი გაეშვება, იგი დაპარსავს კონფიგურაციის ფაილს და მასში მოცემულ თითოეული სანახისთვის ცალკე პროცესს შექმნის, რომელიც თავისმხრივ გამოიძახებს fuse-ის დამაუნთებას.
 
@@ -74,26 +74,26 @@ truncate-ც საჭირო იყო შეცვლილიყო, რა
 
 * სერვერთან შეერთება
 
-    (NRF)[05:16:13:474374 Thursday, 02 August 2018] Success: STORAGE2: 127.0.0.1:10011 server is connected
+    `(NRF)[05:16:13:474374 Thursday, 02 August 2018] Success: STORAGE2: 127.0.0.1:10011 server is connected`
 
 * სერვერთან ვერ შეერთება
 
-    (NRF)[05:16:14:878903 Thursday, 02 August 2018]   Error: STORAGE2: 127.0.0.1:10011 can not connect to server
+    `(NRF)[05:16:14:878903 Thursday, 02 August 2018]   Error: STORAGE2: 127.0.0.1:10011 can not connect to server`
 
 * სერვერის დაკარგულად გამოცხადება
 
-    (NRF)[05:16:36:248306 Thursday, 02 August 2018]   Error: STORAGE1: 127.0.0.1:10001 server declared as lost
+    `(NRF)[05:16:36:248306 Thursday, 02 August 2018]   Error: STORAGE1: 127.0.0.1:10001 server declared as lost`
 
 * ფაილის დაზიანების აღმოჩენა
 
-    (NRF)[05:17:00:799692 Thursday, 02 August 2018]   Error: STORAGE1: 127.0.0.1:10002 server has damaged file
+    `(NRF)[05:17:00:799692 Thursday, 02 August 2018]   Error: STORAGE1: 127.0.0.1:10002 server has damaged file`
 
 * ფაილის წარმატებით აღდგენა
 
-    (NRF)[05:17:10:365637 Thursday, 02 August 2018]   Error: STORAGE2: 127.0.0.1:10012 the file is recovered from another server
+    `(NRF)[05:17:10:365637 Thursday, 02 August 2018]   Error: STORAGE2: 127.0.0.1:10012 the file is recovered from another server`
 
 * ორი ან მეტი სერვერის გათიშვის შეთხვევაში სისტემა წყვეტს მუშაობას
 
-    (NRF)[05:17:29:553403 Thursday, 02 August 2018]   Error: STORAGE2: 127.0.0.1:10012 more than one server is dead!
+    `(NRF)[05:17:29:553403 Thursday, 02 August 2018]   Error: STORAGE2: 127.0.0.1:10012 more than one server is dead!`
 
 ჩემი რჩევა იქნება ლოგები ნახოთ პირდაპირ ტერმინალში, მაგალითად more ბრძანებით, რადგან ფერადად დაიბეჭდება.
