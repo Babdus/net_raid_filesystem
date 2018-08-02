@@ -15,7 +15,6 @@
 #include <sys/time.h>
 
 #include "../nrf_print.h"
-#include "raid_1_server.h"
 
 #define BACKLOG 10
 #define PATH_LEN 256
@@ -25,63 +24,9 @@
 
 char *global_path;
 
-static void print1(const char *syscall)
-{
-	char *info_msg = (char*)malloc(strlen(syscall) + 28);
-	sprintf(info_msg, "We have syscall %s!", syscall);
-	nrf_print_note(info_msg);
-	free(info_msg);
-}
-
-static void print2(const char *syscall, const char *path)
-{
-	char *info_msg = (char*)malloc(strlen(path) + strlen(syscall) + 28);
-	sprintf(info_msg, "raid_1_%s: Path is %s", syscall, path);
-	nrf_print_info(info_msg);
-	free(info_msg);
-}
-
-static void print2p(const char *syscall, void *pointer)
-{
-	char *info_msg = (char*)malloc(strlen(syscall) + 41);
-	sprintf(info_msg, "raid_1_%s: Pointer is %p", syscall, pointer);
-	nrf_print_info(info_msg);
-	free(info_msg);
-}
-
-static void print2i(const char *syscall, int num)
-{
-	char *info_msg = (char*)malloc(strlen(syscall) + 41);
-	sprintf(info_msg, "raid_1_%s: Number is %d", syscall, num);
-	nrf_print_value(info_msg);
-	free(info_msg);
-}
-
-static void print4siii(const char *syscall, int num1, int num2, int num3)
-{
-	char *info_msg = (char*)malloc(strlen(syscall) + 100);
-	sprintf(info_msg, "raid_1_%s: Number 1 is %d, nuber 2 is %d and number 3 is %d", syscall, num1, num2, num3);
-	nrf_print_value(info_msg);
-	free(info_msg);
-}
-
-static void print3(const char *syscall, const char *from, const char *to)
-{
-	char *info_msg = (char*)malloc(strlen(from) + strlen(to) + strlen(syscall) + 19);
-	sprintf(info_msg, "raid_1_%s: From %s to %s", syscall, from, to);
-	nrf_print_info(info_msg);
-	free(info_msg);
-}
-
 int hash_file(char *buf, int fd, int size)
 {
 	memset(buf, 0, HASH_SIZE);
-
-	printf("checksum at begining: ");
-	int j = 0;
-	for (;j < HASH_SIZE; j++)
-		printf("%0x ", buf[j]);
-	printf("\n");
 
 	int offset = 0;
 	char *temp_buf = malloc(HASH_SIZE);
@@ -90,45 +35,17 @@ int hash_file(char *buf, int fd, int size)
 	{
 		rv = pread(fd, temp_buf, HASH_SIZE, offset);
 
-		printf("mid, temp: %.16s\n", temp_buf);
-		printf("temp at mid: ");
-		j = 0;
-		for (;j < HASH_SIZE; j++)
-			printf("%0x ", temp_buf[j]);
-		printf("\n");
-		printf("rv %d\n", rv);
-
-		printf("%s\n", strerror(errno));
-
 		size -= HASH_SIZE;
 		offset += HASH_SIZE;
 		int i = 0;
 		for (; i < HASH_SIZE; i++)
 			buf[i] ^= temp_buf[i];
-
-		printf("checksum at mid: ");
-		j = 0;
-		for (;j < HASH_SIZE; j++)
-			printf("%0x ", buf[j]);
-		printf("\n");
 	}
-
-	printf("checksum before end: ");
-	j = 0;
-	for (;j < HASH_SIZE; j++)
-		printf("%0x ", buf[j]);
-	printf("\n");
 
 	rv = pread(fd, temp_buf, size, offset);
 	int i = 0;
 	for (; i < size; i++)
 		buf[i] ^= temp_buf[i];
-
-	printf("checksum in the end: ");
-	j = 0;
-	for (;j < HASH_SIZE; j++)
-		printf("%0x ", buf[j]);
-	printf("\n");
 
 	free(temp_buf);
 	return rv;
@@ -147,30 +64,12 @@ int check_file(const char *path)
 
 	if (xattr < 0) printf("error: %s\n", strerror(errno));
 
-	printf("checksum: ");
-	int i = 0;
-	for (;i < HASH_SIZE; i++)
-		printf("%0x ", checksum[i]);
-	printf("\n");
-
-	
-
-	printf("file size: %d\n", size);
-
 	int fd = open(path, O_RDONLY);
 	char *new_checksum = malloc(HASH_SIZE);
 	hash_file(new_checksum, fd, size);
 	close(fd);
-
-	printf("new checksum: ");
-	i = 0;
-	for (;i < HASH_SIZE; i++)
-		printf("%0x ", new_checksum[i]);
-	printf("\n");
 	
 	int cmp = memcmp(checksum, new_checksum, HASH_SIZE);
-
-	printf("cmp: %d\n", cmp);
 
 	free(checksum);
 	free(new_checksum);
@@ -180,7 +79,7 @@ int check_file(const char *path)
 
 int call_raid_1_function(int client_fd, char *buf)
 {
-	print1(buf);
+	// print1(buf);
 
 	if (strcmp(buf, "lstat") == 0)
 	{
@@ -190,14 +89,14 @@ int call_raid_1_function(int client_fd, char *buf)
 		strcat(path, global_path);
 		strcat(path, buf + 6);
 
-		print2(buf, path);
+		// print2(buf, path);
 
 		struct stat *stat = malloc(sizeof(struct stat));
 		int rv = lstat(path, stat);
-		nrf_print_note("Stat after lstat");
-		nrf_print_struct(stat, "stat", 1, 1);
-		print2i(buf, rv);
-		print2i(buf, errno);
+		// nrf_print_note("Stat after lstat");
+		// nrf_print_struct(stat, "stat", 1, 1);
+		// print2i(buf, rv);
+		// print2i(buf, errno);
 		free(path);
 
 		buf--;
@@ -218,15 +117,15 @@ int call_raid_1_function(int client_fd, char *buf)
 		strcat(path, global_path);
 		strcat(path, buf + 7);
 
-		print2(buf, path);
+		// print2(buf, path);
 
 		int mask;
 		memcpy(&mask, buf + 8 + strlen(buf + 7), sizeof(int));
 
 		int rv = access(path, mask);
 
-		print2i(buf, rv);
-		print2i(buf, errno);
+		// print2i(buf, rv);
+		// print2i(buf, errno);
 
 		free(path);
 
@@ -244,7 +143,7 @@ int call_raid_1_function(int client_fd, char *buf)
 		strcat(path, global_path);
 		strcat(path, buf + 8);
 
-		print2(buf, path);
+		// print2(buf, path);
 
 		DIR *dir = opendir(path);
 
@@ -254,14 +153,14 @@ int call_raid_1_function(int client_fd, char *buf)
 		if (dir == NULL) rv = -1;
 		else rv = 0;
 
-		print2p(buf, dir);
+		// print2p(buf, dir);
 
 		buf--;
 		memcpy(buf, &rv, sizeof(int));
 		memcpy(buf + sizeof(int), &errno, sizeof(int));
 		memcpy(buf + sizeof(int) * 2, &dir, sizeof(DIR *));
 
-		print2p("opendir", (DIR *)(*(uint64_t *)(buf + sizeof(int) * 2)));
+		// print2p("opendir", (DIR *)(*(uint64_t *)(buf + sizeof(int) * 2)));
 
 		return sizeof(DIR *) + sizeof(int) * 2;
 	}
@@ -270,18 +169,18 @@ int call_raid_1_function(int client_fd, char *buf)
 		DIR *dir;
 		memcpy(&dir, buf + 8, sizeof(DIR *));
 
-		print2p(buf, dir);
+		// print2p(buf, dir);
 
 		struct dirent *de = readdir(dir);
 
-		nrf_print_note("after syscall readdir");
+		// nrf_print_note("after syscall readdir");
 
 		buf--;
 
 		int rv;
 		if (de != NULL)
 		{
-			nrf_print_struct(de, "dirent", 1, 1);
+			// nrf_print_struct(de, "dirent", 1, 1);
 			rv = 0;
 			memcpy(buf, &rv, sizeof(int));
 			memcpy(buf + sizeof(int), &errno, sizeof(int));
@@ -290,7 +189,7 @@ int call_raid_1_function(int client_fd, char *buf)
 		else
 		{
 			rv = -1;
-			nrf_print_warning("We have \033[31;1mNULL\033[0m");
+			// nrf_print_warning("We have \033[31;1mNULL\033[0m");
 			memcpy(buf, &rv, sizeof(int));
 			memcpy(buf + sizeof(int), &errno, sizeof(int));
 			memset(buf + sizeof(int) * 2, 0, sizeof(struct dirent));
@@ -303,7 +202,7 @@ int call_raid_1_function(int client_fd, char *buf)
 		DIR *dir;
 		memcpy(&dir, buf + 9, sizeof(DIR *));
 
-		print2p(buf, dir);
+		// print2p(buf, dir);
 
 		int rv = closedir(dir);
 
@@ -320,7 +219,7 @@ int call_raid_1_function(int client_fd, char *buf)
 		strcat(path, global_path);
 		strcat(path, buf + 6);
 
-		print2(buf, path);
+		// print2(buf, path);
 
 		mode_t mode;
 		dev_t rdev;
@@ -344,7 +243,7 @@ int call_raid_1_function(int client_fd, char *buf)
 		strcat(path, global_path);
 		strcat(path, buf + 6);
 
-		print2(buf, path);
+		// print2(buf, path);
 
 		mode_t mode;
 		memcpy(&mode, buf + 7 + strlen(buf + 6), sizeof(mode_t));
@@ -366,7 +265,7 @@ int call_raid_1_function(int client_fd, char *buf)
 		strcat(path, global_path);
 		strcat(path, buf + 5);
 
-		print2(buf, path);
+		// print2(buf, path);
 
 		int flags;
 		memcpy(&flags, buf + 6 + strlen(buf + 5), sizeof(int));
@@ -376,17 +275,13 @@ int call_raid_1_function(int client_fd, char *buf)
 
 		int rv = open(path, flags, mode);
 
-		print2i(buf, rv);
+		// print2i(buf, rv);
 
 		free(path);
 
 		buf--;
 
-		printf("buf[0]: %c\n", buf[0]);
-
 		if (buf[0] == '1' && rv >= 0 && check_file(path) < 0) rv = FILE_DAMAGED;
-
-		printf("rv: %d\n", rv);
 		
 		memcpy(buf, &rv, sizeof(int));
 		memcpy(buf + sizeof(int), &errno, sizeof(int));
@@ -400,7 +295,7 @@ int call_raid_1_function(int client_fd, char *buf)
 		strcat(path, global_path);
 		strcat(path, buf + 7);
 
-		print2(buf, path);
+		// print2(buf, path);
 
 		int rv = unlink(path);
 
@@ -419,7 +314,7 @@ int call_raid_1_function(int client_fd, char *buf)
 		strcat(path, global_path);
 		strcat(path, buf + 6);
 
-		print2(buf, path);
+		// print2(buf, path);
 
 		int rv = rmdir(path);
 
@@ -443,7 +338,7 @@ int call_raid_1_function(int client_fd, char *buf)
 		strcat(to, global_path);
 		strcat(to, buf + 8 + strlen(buf + 7));
 
-		print3(buf, from, to);
+		// print3(buf, from, to);
 
 		int rv = rename(from, to);
 
@@ -451,112 +346,6 @@ int call_raid_1_function(int client_fd, char *buf)
 		free(to);
 
 		buf--;
-		memcpy(buf, &rv, sizeof(int));
-		memcpy(buf + sizeof(int), &errno, sizeof(int));
-		return sizeof(int) * 2;
-	}
-	else if (strcmp(buf, "pread") == 0)
-	{	
-		int fd;
-		size_t size;
-		off_t offset;
-		memcpy(&fd, buf + 6, sizeof(int));
-		memcpy(&size, buf + 6 + sizeof(int), sizeof(size_t));
-		memcpy(&offset, buf + 6 + sizeof(int) + sizeof(size_t), sizeof(off_t));
-
-		print4siii(buf, fd, size, offset);
-
-		char *read_buf = malloc(size);
-
-		int rv = pread(fd, read_buf, size, offset);
-
-		print2i(buf, rv);
-		print2(buf, read_buf);
-		printf("size: %d, offset: %d, rv: %d\n", (int)size, (int)offset, rv);
-
-		buf--;
-
-		memcpy(buf, &rv, sizeof(int));
-		memcpy(buf + sizeof(int), &errno, sizeof(int));
-
-		write(client_fd, buf, sizeof(int) * 2);
-
-		char *temp_buf = read_buf;
-		while (rv > 0)
-		{
-			memcpy(buf, temp_buf, BUF_SIZE);
-			temp_buf += BUF_SIZE;
-			rv -= BUF_SIZE;
-
-			int write_size = write(client_fd, buf, BUF_SIZE);
-			printf("write size: %d, rv: %d\n", write_size, rv);
-		}
-
-		free(read_buf);
-
-		return 0;
-	}
-	else if (strcmp(buf, "pwrite") == 0)
-	{
-		char *path = malloc(PATH_LEN);
-		path[0] = '\0';
-
-		strcat(path, global_path);
-		strcat(path, buf + 7);
-
-		print2(buf, path);
-
-		free(path);
-
-		int fd;
-		size_t size;
-		off_t offset;
-		memcpy(&fd, buf + 8 + strlen(buf + 7), sizeof(int));
-		memcpy(&size, buf + 8 + strlen(buf + 7) + sizeof(int), sizeof(size_t));
-		memcpy(&offset, buf + 8 + strlen(buf + 7) + sizeof(int) + sizeof(size_t), sizeof(off_t));
-
-		print4siii(buf, fd, size, offset);
-
-		buf--;
-
-		int int_size = (int)size;
-		int rv = 0;
-		while (int_size > 0)
-		{
-			int read_size = BUF_SIZE;
-			if (int_size < BUF_SIZE) read_size = size;
-			read(client_fd, buf, read_size);
-			while (strlen(buf) < 1)
-				read(client_fd, buf, read_size);
-			rv = pwrite(fd, buf, read_size, offset);
-			printf("rv: %d", rv);
-			offset += read_size;
-			int_size -= BUF_SIZE;
-			printf("write read_size: %d\n", read_size);
-		}
-
-
-		// struct stat st;
-		// fstat(fd, &st);
-		// int file_size = st.st_size;
-
-		// printf("file_size %d\n", file_size);
-
-		// int read_fd = open(path, O_RDONLY);
-		// char *checksum = malloc(HASH_SIZE);
-		// hash_file(checksum, read_fd, file_size);
-		// close(read_fd);
-		
-		// printf("checksum: ");
-		// int i = 0;
-		// for (;i < HASH_SIZE; i++)
-		// 	printf("%x ", checksum[i]);
-		// printf("\n");
-
-		// int xattr = fsetxattr(fd, "checksum", checksum, HASH_SIZE, 0);
-
-		// if (xattr < 0) printf("error: %s\n", strerror(errno));
-
 		memcpy(buf, &rv, sizeof(int));
 		memcpy(buf + sizeof(int), &errno, sizeof(int));
 		return sizeof(int) * 2;
@@ -578,8 +367,6 @@ int call_raid_1_function(int client_fd, char *buf)
 		memcpy(&offset, buf + 7 + strlen(buf + 6) + sizeof(int), sizeof(int));
 		memcpy(&size, buf + 7 + strlen(buf + 6) + sizeof(int) * 2, sizeof(int));
 
-		printf("fd %d, offset %d, size %d\n", fd, offset, size);
-
 		memcpy(write_buf, buf + 7 + strlen(buf + 6) + sizeof(int) * 3, size);
 
 		int rv = pwrite(fd, write_buf, size, offset);
@@ -592,18 +379,10 @@ int call_raid_1_function(int client_fd, char *buf)
 			fstat(fd, &st);
 			int file_size = st.st_size;
 
-			printf("file_size %d\n", file_size);
-
 			int read_fd = open(path, O_RDONLY);
 			char *checksum = malloc(HASH_SIZE);
 			hash_file(checksum, read_fd, file_size);
 			close(read_fd);
-			
-			printf("checksum: ");
-			int i = 0;
-			for (;i < HASH_SIZE; i++)
-				printf("%x ", checksum[i]);
-			printf("\n");
 
 			int xattr = fsetxattr(fd, "user.checksum", checksum, HASH_SIZE, 0);
 
@@ -624,8 +403,6 @@ int call_raid_1_function(int client_fd, char *buf)
 		memcpy(&fd, buf + 5, sizeof(int));
 		memcpy(&offset, buf + 5 + sizeof(int), sizeof(int));
 		memcpy(&size, buf + 5 + sizeof(int) * 2, sizeof(int));
-
-		printf("fd %d, offset %d, size %d\n", fd, offset, size);
 
 		int rv = pread(fd, read_buf, size, offset);
 
@@ -648,14 +425,12 @@ int call_raid_1_function(int client_fd, char *buf)
 		strcat(path, global_path);
 		strcat(path, buf + 9);
 
-		print2(buf, path);
+		// print2(buf, path);
 
 		off_t size;
 		memcpy(&size, buf + 10 + strlen(buf + 9), sizeof(off_t));
 
 		int rv = truncate(path, size);
-
-		printf("rv %d, errno %d, size %d\n", rv, errno, (int)size);
 
 		free(path);
 
@@ -669,7 +444,7 @@ int call_raid_1_function(int client_fd, char *buf)
 		int fd;
 		memcpy(&fd, buf + 6, sizeof(int));
 
-		print2i(buf, fd);
+		// print2i(buf, fd);
 
 		int rv = close(fd);
 
@@ -686,7 +461,7 @@ int call_raid_1_function(int client_fd, char *buf)
 		strcat(path, global_path);
 		strcat(path, buf + 7);
 
-		print2(buf, path);
+		// print2(buf, path);
 
 		struct timeval tv[2];
 		memcpy(tv, buf + 8 + strlen(buf + 7), sizeof(struct timeval) * 2);
@@ -717,21 +492,9 @@ void client_handler(int client_fd)
 
         if (strlen(buf) > 0)
         {
-        	if (buf[0] == '1')
+        	if (buf[0] == '1' || buf[0] == '5')
         	{
         		data_size = call_raid_1_function(client_fd, buf + 1);
-
-        		printf("\33[35mbuf: %s\n\33[0m", buf);
-        		// write(1, buf, data_size);
-        		printf("\n");
-        	}
-        	else if (buf[0] == '5')
-        	{
-        		data_size = call_raid_1_function(client_fd, buf + 1);
-
-        		printf("\33[35mbuf: %s\n\33[0m", buf);
-        		// write(1, buf, data_size);
-        		printf("\n");
         	}
         	else
         	{

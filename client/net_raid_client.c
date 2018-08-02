@@ -12,7 +12,6 @@
 
 #include "../nrf_print.h"
 #include "config_parser.h"
-#include "fuse_raid_1.h"
 #include "fuse_raid_5.h"
 #include "connection.h"
 

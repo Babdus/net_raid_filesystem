@@ -63,7 +63,6 @@ static int add_fd(struct open_file *of, int fd, int server_num, const char *path
 		of->path = strdup(path);
 	}
 	of->fds[server_num] = fd;
-	printf("add_fd id: %d", of->id);
 	return of->id;
 }
 
@@ -257,11 +256,6 @@ static int send_to_server(char buf[], size_t send_num, int server_num)
 static int setter_function_on_server(const char *syscall, const char *path, const char *to,
 									 mode_t mode, int flags, struct open_file *of, dev_t rdev, struct timeval *tv)
 {
-	printf("setter start\n");
-	char info[1024];
-	sprintf(info, "%s path: %s, to: %s, mode: %d, flags: %d, of: %p, rdev: %d", syscall, path, to, (int)mode, flags, of, (int)rdev);
-	nrf_print_info(info);
-
 	char send_buf[BUFFER_SIZE];
 	int send_num = 0;
 	if (strcmp(syscall, "mkdir") == 0) send_num = pack_mkdir(send_buf, path, mode);
@@ -326,20 +320,13 @@ static int setter_function_on_server(const char *syscall, const char *path, cons
 		if (rv == -1) break;
 	}
 
-	printf("setter end\n");
-
 	if (hotswap_server_num != -1) hotswap(hotswap_server_num);
 
 	return rv;
 }
 
 static int getter_function_on_server(const char *syscall, const char *path, int mask, DIR **dir, int flags, struct open_file *of, int mode, struct stat *stbuf, int *server)
-{	
-	printf("getter start\n");
-	char info[1024];
-	sprintf(info, "%s path: %s, mask: %d, flags: %d, of: %p, mode: %d, stbuf: %p, server: %p", syscall, path, mask, flags, of, mode, stbuf, server);
-	nrf_print_info(info);
-	
+{
 	char send_buf[BUFFER_SIZE];
 	int send_num = 0;
 	if (strcmp(syscall, "lstat") == 0) send_num = pack_lstat(send_buf, path);
@@ -408,11 +395,6 @@ static int getter_function_on_server(const char *syscall, const char *path, int 
 
 static int function_on_one_server(const char *syscall, DIR **dir, struct dirent *de, int id, int server, int offset, int size, const char *write_buf, char *read_buf, struct stat *stbuf, const char *path)
 {
-	printf("oner start\n");
-	char info[1024];
-	sprintf(info, "%s de: %p, id: %d, server: %d, offset: %d, size: %d, path: %s", syscall, de, id, server, offset, size, path);
-	nrf_print_info(info);
-
 	char buf[BUFFER_SIZE];
 	int send_num = 0;
 	if (strcmp(syscall, "readdir") == 0) send_num = pack_readdir(buf, dir);
@@ -451,21 +433,8 @@ static int function_on_one_server(const char *syscall, DIR **dir, struct dirent 
 
 	int rv = unpack(syscall, NULL, buf, open_files[id], server, stbuf, dir, de);
 
-	printf("\033[30;1mrv: %d\n", rv);
-	if (write_buf != NULL)
-	{
-		int i = 0;
-		for (;i < rv; i++)
-		{
-			printf("%c", write_buf[i]);
-		}
-	}
-	printf("\033[0m\n");
-
 	if (rv > 0 && strcmp(syscall, "read") == 0)
-	{
 		rv = read(server_fds[server], read_buf, size);
-	}
 
 	return rv;
 }
@@ -477,47 +446,12 @@ static void hash(char *xor, const char *read_buf, int size)
 		xor[i] ^= read_buf[i];
 }
 
-// static int xor_stripe(int id, int stripe)
-// {
-// 	printf("\033[33;1mxor\033[0m\n");
-// 	int xor_server = servers_count - (stripe % servers_count) - 1;
-// 	char read_buf[CHUNK_SIZE];
-// 	char xor[CHUNK_SIZE];
-// 	memset(xor, 0, CHUNK_SIZE);
-// 	int i = 0;
-
-// 	struct open_file *of = init_open_file();
-// 	int res = setter_function_on_server("open", open_files[id]->path, "", 0, O_RDONLY, of, 0, NULL);
-
-// 	for(; i < servers_count; i++)
-// 	{
-// 		if (i != xor_server)
-// 		{
-// 			memset(read_buf, 0, CHUNK_SIZE);
-// 			res = function_on_one_server("read", NULL, NULL, of->id, i, stripe * CHUNK_SIZE, CHUNK_SIZE, NULL, read_buf, NULL, NULL);
-
-// 			hash(xor, read_buf, res);
-// 			printf("res:%d\n", res);
-// 			printf("read_buf:\n%s\n", read_buf);
-// 			printf("xor:\n%s\n", xor);
-// 		}
-
-// 	}
-
-// 	for (i = 0; i < servers_count; i++)
-// 		if (of != NULL && of->fds[i] != UNOPENED)
-// 			function_on_one_server("close", NULL, NULL, of->id, i, 0, 0, NULL, NULL, NULL, NULL);
-
-// 	return function_on_one_server("write", NULL, NULL, id, xor_server, stripe * CHUNK_SIZE, CHUNK_SIZE, xor, NULL, NULL, NULL);
-// }
-
 static int set_old_data(int id, char *old_data, int server, int stripe, int offset, int size)
 {
 	int res;
 	if (server_fds[server] == -1)
 	{
 		char xor[size];
-		
 		int i;
 		for (i = 0; i < servers_count; i++)
 		{
@@ -529,10 +463,7 @@ static int set_old_data(int id, char *old_data, int server, int stripe, int offs
 			}
 		}
 	}
-	else
-	{
-		res = function_on_one_server("read", NULL, NULL, id, server, stripe * CHUNK_SIZE + offset, size, NULL, old_data, NULL, NULL);
-	}
+	else res = function_on_one_server("read", NULL, NULL, id, server, stripe * CHUNK_SIZE + offset, size, NULL, old_data, NULL, NULL);
 	return res;
 }
 
@@ -570,17 +501,14 @@ static int copy_file(const char *path, int dest_server, int src_server)
 	nrf_print_error_x(global_config->err_log_path, global_storage->diskname, servers[dest_server]->ip, servers[dest_server]->port, "server has damaged file");
 	struct open_file *read_of = init_open_file();
 	int res = setter_function_on_server("open", path, "", 0, O_RDONLY, read_of, 1, NULL);
-	printf("read_of: fd 0: %d, fd 1: %d\n", read_of->fds[0], read_of->fds[1]);
 	struct open_file *write_of = init_open_file();
 	res = setter_function_on_server("open", path, "", 0, O_WRONLY, write_of, 1, NULL);
-	printf("write_of: fd 0: %d, fd 1: %d\n", write_of->fds[0], write_of->fds[1]);
 	char buf[CHUNK_SIZE * 3];
 	memset(buf, 0, CHUNK_SIZE * 3);
 	struct stat *stbuf = malloc(sizeof(struct stat));
 	res = function_on_one_server("lstat", NULL, NULL, 0, src_server, 0, 0, NULL, NULL, stbuf, path);
 	if (res == -1) printf("error: %s\n", strerror(errno));
 	int size = stbuf->st_size;
-	printf("size: %d\n", size);
 	res = function_on_one_server("truncate", NULL, NULL, 0, dest_server, 0, size, NULL, NULL, NULL, path);
 	if (res == -1) printf("error: %s\n", strerror(errno));
 	int offset = 0;
@@ -588,7 +516,6 @@ static int copy_file(const char *path, int dest_server, int src_server)
 	{
 		res = function_on_one_server("read", NULL, NULL, read_of->id, src_server, offset, CHUNK_SIZE * 3, NULL, buf, NULL, NULL);
 		if (res == -1) printf("error: %s\n", strerror(errno));
-		printf("buf: %s\n", buf);
 		res = function_on_one_server("write", NULL, NULL, write_of->id, dest_server, offset, CHUNK_SIZE * 3, buf, NULL, NULL, path);
 		if (res == -1) printf("error: %s\n", strerror(errno));
 		size -= CHUNK_SIZE * 3;
@@ -597,7 +524,6 @@ static int copy_file(const char *path, int dest_server, int src_server)
 	}
 	res = function_on_one_server("read", NULL, NULL, read_of->id, src_server, offset, size, NULL, buf, NULL, NULL);
 	if (res == -1) printf("error: %s\n", strerror(errno));
-	printf("buf: %s\n", buf);
 	res = function_on_one_server("write", NULL, NULL, write_of->id, dest_server, offset, size, buf, NULL, NULL, path);
 	if (res == -1) printf("error: %s\n", strerror(errno));
 	int i;
@@ -607,6 +533,7 @@ static int copy_file(const char *path, int dest_server, int src_server)
 	for (i = 0; i < servers_count; i++)
 		if (write_of != NULL && write_of->fds[i] != UNOPENED)
 			function_on_one_server("close", NULL, NULL, write_of->id, i, 0, 0, NULL, NULL, NULL, NULL);
+	nrf_print_success_x(global_config->err_log_path, global_storage->diskname, servers[dest_server]->ip, servers[dest_server]->port, "the file is recovered from another server");
 	return res;
 }
 
@@ -646,8 +573,6 @@ static int raid_5_getattr(const char *path, struct stat *stbuf)
 	{
 		res = function_on_one_server("lstat", NULL, NULL, 0, i, 0, 0, NULL, NULL, stbuf, path);
 
-		printf("res: %d\n", res);
-
 		if (res == -1) return -errno;
 		if (res == SERVER_NOT_CONNECTED){
 			not_connected = i;
@@ -660,7 +585,6 @@ static int raid_5_getattr(const char *path, struct stat *stbuf)
 			size += stbuf->st_size;
 		}
 		else size = stbuf->st_size;
-		printf("size %lu\n", size);
 	}
 	stbuf->st_size = size;
 	if (not_connected > -1)
@@ -670,7 +594,6 @@ static int raid_5_getattr(const char *path, struct stat *stbuf)
 		stbuf->st_size += one_server_size;
 	}
 
-	// if (getter_function_on_server("lstat", path, 0, NULL, 0, NULL, 0, stbuf, &server) == -1) return -errno;
 	return 0;
 }
 
@@ -734,18 +657,13 @@ static int raid_5_open(const char *path, struct fuse_file_info *fi)
 {
 	struct open_file *of = init_open_file();
 	int res;
-	// int server;
-	// if (fi->flags & (O_WRONLY | O_CREAT))
 	res = setter_function_on_server("open", path, "", 0, fi->flags, of, 0, NULL);
-	// else
-	// 	res = getter_function_on_server("open", path, 0, NULL, fi->flags, of, 0, NULL, &server);
 	fi->fh = res;
 
 	if (res < 0) return -errno;
 
 	if (global_storage->raid == 1)
 	{
-		printf("of->fds[0]: %d, of->fds[1]: %d\n", of->fds[0], of->fds[1]);
 		if (of->fds[0] >= 0 && of->fds[1] >= 0) return 0;
 		raid_5_release(path, fi);
 		if (of->fds[0] == FILE_DAMAGED && of->fds[1] != FILE_DAMAGED) copy_file(path, 0, 1);
@@ -762,8 +680,6 @@ static int raid_5_read(const char *path, char *buf, size_t size, off_t offset,
 {
 	(void) fi;
 	int res = 0;
-
-	printf("SSSSSIIIZZZZZEEEEE: %lu", size);
 
 	if (global_storage->raid == 1)
 	{
@@ -809,7 +725,6 @@ static int raid_5_read(const char *path, char *buf, size_t size, off_t offset,
 		stripe = chunk_n / (servers_count - 1);
 		if (server_fds[server] == -1)
 		{
-			printf("This is lost server\n");
 			char *lost_buf = malloc(CHUNK_SIZE);
 			int i = 0;
 			memset(buf, 0, CHUNK_SIZE);
@@ -817,16 +732,11 @@ static int raid_5_read(const char *path, char *buf, size_t size, off_t offset,
 			{
 				if (i != server)
 				{
-					printf("server %d for xor\n", i);
 					memset(lost_buf, 0, CHUNK_SIZE);
 					temp_res = function_on_one_server("read", NULL, NULL, fi->fh, i, stripe * CHUNK_SIZE + local_offset, local_size, NULL, lost_buf, NULL, NULL);
 					
-					printf("lost_buf: \n%s\n", lost_buf);
-
 					if (temp_res == -1) return -errno;
 					hash(buf, lost_buf, temp_res);
-
-					printf("buf: \n%s\n", buf);
 				}
 			}
 			free(lost_buf);
@@ -845,7 +755,6 @@ static int raid_5_read(const char *path, char *buf, size_t size, off_t offset,
 	stripe = chunk_n / (servers_count - 1);
 	if (server_fds[server] == -1)
 	{
-		printf("This is lost server\n");
 		char *lost_buf = malloc(CHUNK_SIZE);
 		int i = 0;
 		memset(buf, 0, CHUNK_SIZE);
@@ -853,16 +762,11 @@ static int raid_5_read(const char *path, char *buf, size_t size, off_t offset,
 		{
 			if (i != server)
 			{
-				printf("server %d for xor\n", i);
 				memset(lost_buf, 0, CHUNK_SIZE);
 				temp_res = function_on_one_server("read", NULL, NULL, fi->fh, i, stripe * CHUNK_SIZE + local_offset, size, NULL, lost_buf, NULL, NULL);
 				
-				printf("lost_buf: \n%s\n", lost_buf);
-
 				if (temp_res == -1) return -errno;
 				hash(buf, lost_buf, temp_res);
-
-				printf("buf: \n%s\n", buf);
 			}
 		}
 		free(lost_buf);
@@ -877,7 +781,6 @@ static int raid_5_read(const char *path, char *buf, size_t size, off_t offset,
 static int raid_5_write(const char *path, const char *buf, size_t size,
 		     off_t offset, struct fuse_file_info *fi)
 {
-	printf("\033[31;1mwrite\033[0m\n");
 	int res;
 	int res_size = size;
 
@@ -913,14 +816,10 @@ static int raid_5_write(const char *path, const char *buf, size_t size,
 	int local_size = CHUNK_SIZE - local_offset;
 	int server;
 	int stripe = -1;
-	int last_stripe = -1;
 	while (size > local_size)
 	{
 		server = chunk_n % servers_count;
-		last_stripe = stripe;
 		stripe = chunk_n / (servers_count - 1);
-		printf("\033[32mstripe: %d, last_stripe: %d\033[0m\n", stripe, last_stripe);
-		
 		res = write_on_parity(server, stripe, fi->fh, local_offset, local_size, buf, path);
 		if (res == -1) return -errno;
 		res = function_on_one_server("write", NULL, NULL, fi->fh, server, (stripe * CHUNK_SIZE) + local_offset, local_size, buf, NULL, NULL, path);
@@ -932,17 +831,11 @@ static int raid_5_write(const char *path, const char *buf, size_t size,
 		local_offset = 0;
 	}
 	server = chunk_n % servers_count;
-	last_stripe = stripe;
 	stripe = chunk_n / (servers_count - 1);
-	printf("\033[32mstripe: %d, last_stripe: %d\033[0m\n", stripe, last_stripe);
-
 	res = write_on_parity(server, stripe, fi->fh, local_offset, local_size, buf, path);
 	if (res == -1) return -errno;
 	res = function_on_one_server("write", NULL, NULL, fi->fh, server, (stripe * CHUNK_SIZE) + local_offset, size, buf, NULL, NULL, path);
-	printf("\033[32mstripe: %d, last_stripe: %d\033[0m\n", stripe, last_stripe);
-	printf("res: %d\n", res);
 	if (res == -1) return -errno;
-	printf("\033[31;1m%d\n\033[0m", (int)size);
 	return res_size;
 }
 
