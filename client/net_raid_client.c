@@ -27,11 +27,7 @@ static void mount(struct storage *storage)
 	argv[4] = strdup(storage->mountpoint);
 
 	int status = -1;
-	if(storage->raid == 1)
-	{
-		status = mount_raid_1(argc, argv, storage);
-	}
-	else if(storage->raid == 5)
+	if(storage->raid == 1 || storage->raid == 5)
 	{
 		status = mount_raid_5(argc, argv, storage);
 	}

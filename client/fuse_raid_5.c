@@ -580,6 +580,14 @@ static int raid_5_unlink(const char *path);
 
 static int raid_5_getattr(const char *path, struct stat *stbuf)
 {
+
+	if (global_storage->raid == 1)
+	{
+		int server;
+		if (getter_function_on_server("lstat", path, 0, NULL, 0, NULL, 0, stbuf, &server) == -1) return -errno;
+		return 0;
+	}
+
 	int res;
 	int i = 0;
 	off_t size = 0;
@@ -694,6 +702,37 @@ static int raid_5_read(const char *path, char *buf, size_t size, off_t offset,
 	(void) fi;
 	int res = 0;
 
+	printf("SSSSSIIIZZZZZEEEEE: %lu", size);
+
+	if (global_storage->raid == 1)
+	{
+		int temp_res = 0;
+		int chunk_size = CHUNK_SIZE * 3;
+		while (size > chunk_size)
+		{
+			int i;
+			for (i = 0; i < servers_count; i++)
+			{
+				temp_res = function_on_one_server("read", NULL, NULL, fi->fh, i, offset, chunk_size, NULL, buf, NULL, NULL);
+				if (temp_res > -1) break;
+			}
+			size -= temp_res;
+			offset += temp_res;
+			buf += temp_res;
+			if (temp_res == 0) return res;
+			res += temp_res;
+		}
+		int i;
+		for (i = 0; i < servers_count; i++)
+		{
+			temp_res = function_on_one_server("read", NULL, NULL, fi->fh, i, offset, size, NULL, buf, NULL, NULL);
+			if (temp_res > -1) break;
+		}
+		if (temp_res == 0) return res;
+		res += temp_res;
+		return res;
+	}
+
 	struct open_file *of = open_files[fi->fh];
 	if (of == NULL) return -1;
 
@@ -781,6 +820,30 @@ static int raid_5_write(const char *path, const char *buf, size_t size,
 	int res;
 	int res_size = size;
 
+	if (global_storage->raid == 1)
+	{
+		int chunk_size = CHUNK_SIZE * 3;
+		while (size > chunk_size)
+		{
+			int i;
+			for (i = 0; i < servers_count; i++)
+			{
+				res = function_on_one_server("write", NULL, NULL, fi->fh, i, offset, chunk_size, buf, NULL, NULL, NULL);
+				if (res == -1) return -errno;
+			}
+			size -= res;
+			offset += res;
+			buf += res;
+		}
+		int i;
+		for (i = 0; i < servers_count; i++)
+		{
+			res = function_on_one_server("write", NULL, NULL, fi->fh, i, offset, size, buf, NULL, NULL, NULL);
+			if (res == -1) return -errno;
+		}
+		return res_size;
+	}
+
 	struct open_file *of = open_files[fi->fh];
 	if (of == NULL) return -1;
 
@@ -825,6 +888,18 @@ static int raid_5_write(const char *path, const char *buf, size_t size,
 static int raid_5_truncate(const char *path, off_t size)
 {
 	int res;
+
+	if (global_storage->raid == 1)
+	{
+		int i;
+		for (i = 0; i < servers_count; i++)
+		{
+			res = function_on_one_server("truncate", NULL, NULL, 0, i, 0, size, NULL, NULL, NULL, path);
+			if (res == -1) return -errno;
+		}
+		return 0;
+	}
+
 	int chunks = size / CHUNK_SIZE;
 	int reminder = size % CHUNK_SIZE;
 	int xor_stripe = chunks / (servers_count - 1);
