@@ -24,6 +24,10 @@ int server_fds[MAX_SERVERS];
 struct server *servers[MAX_SERVERS];
 int servers_count;
 
+int hotswaped_server = -1;
+
+char temp_chunk[CHUNK_SIZE];
+
 struct open_file {
 	int fds[MAX_SERVERS];
 	char *path;
@@ -81,7 +85,11 @@ static void remove_fd(struct open_file *of, int server_num)
 
 static void hotswap(int server_num)
 {
-	nrf_print_error_x(global_config->err_log_path, global_storage->diskname, servers[server_num]->ip, servers[server_num]->port, "server declared as lost");
+	if (hotswaped_server != server_num)
+	{
+		nrf_print_error_x(global_config->err_log_path, global_storage->diskname, servers[server_num]->ip, servers[server_num]->port, "server declared as lost");
+		hotswaped_server = server_num;
+	}
 }
 
 static int receive_num(const char *syscall)
@@ -268,15 +276,13 @@ static int setter_function_on_server(const char *syscall, const char *path, cons
 	{
 		if (server_fds[i] == -1)
 		{
-			if ((server_fds[i] = connect_to_server(servers[i], global_storage)) == -1){
-				if (hotswap_server_num != -1)
-				{
-					nrf_print_error_x(global_config->err_log_path, global_storage->diskname, servers[i]->ip, servers[i]->port, "more than one server is dead!");
-					exit(143);
-				}
-				hotswap_server_num = i;
-				continue;
+			if (hotswap_server_num != -1)
+			{
+				nrf_print_error_x(global_config->err_log_path, global_storage->diskname, servers[i]->ip, servers[i]->port, "more than one server is dead!");
+				exit(143);
 			}
+			hotswap_server_num = i;
+			continue;
 		}
 		int sent_num = send_to_server(send_buf, send_num, i);
 		if (sent_num == -1)
@@ -345,15 +351,13 @@ static int getter_function_on_server(const char *syscall, const char *path, int 
 	{
 		if (server_fds[i] == -1)
 		{
-			if ((server_fds[i] = connect_to_server(servers[i], global_storage)) == -1){
-				if (hotswap_server_num != -1)
-				{
-					nrf_print_error_x(global_config->err_log_path, global_storage->diskname, servers[i]->ip, servers[i]->port, "more than one server is dead!");
-					exit(143);
-				}
-				hotswap_server_num = i;
-				continue;
+			if (hotswap_server_num != -1)
+			{
+				nrf_print_error_x(global_config->err_log_path, global_storage->diskname, servers[i]->ip, servers[i]->port, "more than one server is dead!");
+				exit(143);
 			}
+			hotswap_server_num = i;
+			continue;
 		}
 		int sent_num = send_to_server(send_buf, send_num, i);
 		if (sent_num == -1)
@@ -416,14 +420,13 @@ static int function_on_one_server(const char *syscall, DIR **dir, struct dirent 
 	else if (strcmp(syscall, "truncate") == 0) send_num = pack_truncate(buf, path, size);
 
 	if (server_fds[server] == -1)
-		if ((server_fds[server] = connect_to_server(servers[server], global_storage)) == -1)
-			return SERVER_NOT_CONNECTED;
+		return SERVER_NOT_CONNECTED;
 
 	int sent_num = send_to_server(buf, send_num, server);
 	if (sent_num == -1)
 	{	
 		hotswap(server);
-		return -1;
+		return SERVER_NOT_CONNECTED;
 	}
 	int rec_num = 0;
 	int should_receive_num = receive_num(syscall);
@@ -438,7 +441,7 @@ static int function_on_one_server(const char *syscall, DIR **dir, struct dirent 
 		{
 			hotswap(server);
 			server_fds[server] = -1;
-			return -1;
+			return SERVER_NOT_CONNECTED;
 		}
 	}
 
@@ -463,44 +466,99 @@ static int function_on_one_server(const char *syscall, DIR **dir, struct dirent 
 	return rv;
 }
 
-static void hash(char *xor, char *read_buf, int size)
+static void hash(char *xor, const char *read_buf, int size)
 {
 	int i = 0;
 	for (; i < size; i++)
 		xor[i] ^= read_buf[i];
 }
 
-static int xor_stripe(int id, int stripe)
+// static int xor_stripe(int id, int stripe)
+// {
+// 	printf("\033[33;1mxor\033[0m\n");
+// 	int xor_server = servers_count - (stripe % servers_count) - 1;
+// 	char read_buf[CHUNK_SIZE];
+// 	char xor[CHUNK_SIZE];
+// 	memset(xor, 0, CHUNK_SIZE);
+// 	int i = 0;
+
+// 	struct open_file *of = init_open_file();
+// 	int res = setter_function_on_server("open", open_files[id]->path, "", 0, O_RDONLY, of, 0, NULL);
+
+// 	for(; i < servers_count; i++)
+// 	{
+// 		if (i != xor_server)
+// 		{
+// 			memset(read_buf, 0, CHUNK_SIZE);
+// 			res = function_on_one_server("read", NULL, NULL, of->id, i, stripe * CHUNK_SIZE, CHUNK_SIZE, NULL, read_buf, NULL, NULL);
+
+// 			hash(xor, read_buf, res);
+// 			printf("res:%d\n", res);
+// 			printf("read_buf:\n%s\n", read_buf);
+// 			printf("xor:\n%s\n", xor);
+// 		}
+
+// 	}
+
+// 	for (i = 0; i < servers_count; i++)
+// 		if (of != NULL && of->fds[i] != UNOPENED)
+// 			function_on_one_server("close", NULL, NULL, of->id, i, 0, 0, NULL, NULL, NULL, NULL);
+
+// 	return function_on_one_server("write", NULL, NULL, id, xor_server, stripe * CHUNK_SIZE, CHUNK_SIZE, xor, NULL, NULL, NULL);
+// }
+
+static int set_old_data(int id, char *old_data, int server, int stripe, int offset, int size)
 {
-	printf("\033[33;1mxor\033[0m\n");
+	int res;
+	if (server_fds[server] == -1)
+	{
+		char xor[size];
+		
+		int i;
+		for (i = 0; i < servers_count; i++)
+		{
+			if (i != server)
+			{
+				memset(xor, 0, size);
+				res = function_on_one_server("read", NULL, NULL, id, i, stripe * CHUNK_SIZE + offset, size, NULL, xor, NULL, NULL);
+				hash(old_data, xor, size);
+			}
+		}
+	}
+	else
+	{
+		res = function_on_one_server("read", NULL, NULL, id, server, stripe * CHUNK_SIZE + offset, size, NULL, old_data, NULL, NULL);
+	}
+	return res;
+}
+
+static int write_on_parity(int server, int stripe, int id, int offset, int size, const char *new_data)
+{
 	int xor_server = servers_count - (stripe % servers_count) - 1;
-	char read_buf[CHUNK_SIZE];
-	char xor[CHUNK_SIZE];
-	memset(xor, 0, CHUNK_SIZE);
-	int i = 0;
+	char old_data[size];
+	memset(old_data, 0, size);
 
 	struct open_file *of = init_open_file();
 	int res = setter_function_on_server("open", open_files[id]->path, "", 0, O_RDONLY, of, 0, NULL);
 
-	for(; i < servers_count; i++)
-	{
-		if (i != xor_server)
-		{
-			memset(read_buf, 0, CHUNK_SIZE);
-			res = function_on_one_server("read", NULL, NULL, of->id, i, stripe * CHUNK_SIZE, CHUNK_SIZE, NULL, read_buf, NULL, NULL);
+	res = set_old_data(of->id, old_data, server, stripe, offset, size);
 
-			hash(xor, read_buf, res);
-			printf("res:%d\n", res);
-			printf("read_buf:\n%s\n", read_buf);
-			printf("xor:\n%s\n", xor);
-		}
-	}
+	hash(old_data, new_data, size);
 
+	char parity[size];
+	memset(parity, 0, size);
+
+	res = function_on_one_server("read", NULL, NULL, of->id, xor_server, stripe * CHUNK_SIZE + offset, size, NULL, parity, NULL, NULL);
+
+	int i;
 	for (i = 0; i < servers_count; i++)
 		if (of != NULL && of->fds[i] != UNOPENED)
 			function_on_one_server("close", NULL, NULL, of->id, i, 0, 0, NULL, NULL, NULL, NULL);
 
-	return function_on_one_server("write", NULL, NULL, id, xor_server, stripe * CHUNK_SIZE, CHUNK_SIZE, xor, NULL, NULL, NULL);
+	hash(parity, old_data, size);
+
+	res = function_on_one_server("write", NULL, NULL, id, xor_server, stripe * CHUNK_SIZE + offset, size, parity, NULL, NULL, NULL);
+	return res;
 }
 
 static int raid_5_getattr(const char *path, struct stat *stbuf);
@@ -685,7 +743,31 @@ static int raid_5_read(const char *path, char *buf, size_t size, off_t offset,
 	}
 	server = chunk_n % servers_count;
 	stripe = chunk_n / (servers_count - 1);
-	temp_res = function_on_one_server("read", NULL, NULL, fi->fh, server, (stripe * CHUNK_SIZE) + local_offset, size, NULL, buf, NULL, NULL);
+	if (server_fds[server] == -1)
+	{
+		printf("This is lost server\n");
+		char *lost_buf = malloc(CHUNK_SIZE);
+		int i = 0;
+		memset(buf, 0, CHUNK_SIZE);
+		for(; i < servers_count; i++)
+		{
+			if (i != server)
+			{
+				printf("server %d for xor\n", i);
+				memset(lost_buf, 0, CHUNK_SIZE);
+				temp_res = function_on_one_server("read", NULL, NULL, fi->fh, i, stripe * CHUNK_SIZE + local_offset, size, NULL, lost_buf, NULL, NULL);
+				
+				printf("lost_buf: \n%s\n", lost_buf);
+
+				if (temp_res == -1) return -errno;
+				hash(buf, lost_buf, temp_res);
+
+				printf("buf: \n%s\n", buf);
+			}
+		}
+		free(lost_buf);
+	}
+	else temp_res = function_on_one_server("read", NULL, NULL, fi->fh, server, (stripe * CHUNK_SIZE) + local_offset, size, NULL, buf, NULL, NULL);
 	if (temp_res == -1) return -errno;
 	if (temp_res == 0) return res;
 	res += temp_res;
@@ -714,8 +796,9 @@ static int raid_5_write(const char *path, const char *buf, size_t size,
 		last_stripe = stripe;
 		stripe = chunk_n / (servers_count - 1);
 		printf("\033[32mstripe: %d, last_stripe: %d\033[0m\n", stripe, last_stripe);
-		if (stripe > last_stripe && last_stripe != -1)
-			if (xor_stripe(fi->fh, last_stripe) == -1) return -errno;
+		
+		res = write_on_parity(server, stripe, fi->fh, local_offset, local_size, buf);
+		if (res == -1) return -errno;
 		res = function_on_one_server("write", NULL, NULL, fi->fh, server, (stripe * CHUNK_SIZE) + local_offset, local_size, buf, NULL, NULL, NULL);
 		if (res == -1) return -errno;
 		size -= local_size;
@@ -728,12 +811,11 @@ static int raid_5_write(const char *path, const char *buf, size_t size,
 	last_stripe = stripe;
 	stripe = chunk_n / (servers_count - 1);
 	printf("\033[32mstripe: %d, last_stripe: %d\033[0m\n", stripe, last_stripe);
-	if (stripe > last_stripe && last_stripe != -1)
-		if (xor_stripe(fi->fh, last_stripe) == -1) return -errno;
+
+	res = write_on_parity(server, stripe, fi->fh, local_offset, local_size, buf);
+	if (res == -1) return -errno;
 	res = function_on_one_server("write", NULL, NULL, fi->fh, server, (stripe * CHUNK_SIZE) + local_offset, size, buf, NULL, NULL, NULL);
 	printf("\033[32mstripe: %d, last_stripe: %d\033[0m\n", stripe, last_stripe);
-	if (xor_stripe(fi->fh, stripe) == -1) return -errno;
-
 	printf("res: %d\n", res);
 	if (res == -1) return -errno;
 	printf("\033[31;1m%d\n\033[0m", (int)size);
@@ -751,6 +833,7 @@ static int raid_5_truncate(const char *path, off_t size)
 	int last_chunk_server = chunks % servers_count;
 	int i;
 	for (i = (xor_server - 1 + servers_count) % servers_count; i != xor_server; i = (i - 1 + servers_count) % servers_count){
+		if (server_fds[i] == -1) continue;
 		if (i == last_chunk_server)
 		{
 			res = function_on_one_server("truncate", NULL, NULL, 0, i, 0, xor_stripe * CHUNK_SIZE + reminder, NULL, NULL, NULL, path);
@@ -770,7 +853,8 @@ static int raid_5_truncate(const char *path, off_t size)
 			if (res == -1) return -errno;
 		}
 	}
-	res = function_on_one_server("truncate", NULL, NULL, 0, xor_server, 0, (xor_stripe + is_larger) * CHUNK_SIZE, NULL, NULL, NULL, path);
+	if (server_fds[xor_server] != -1)
+		res = function_on_one_server("truncate", NULL, NULL, 0, xor_server, 0, (xor_stripe + is_larger) * CHUNK_SIZE, NULL, NULL, NULL, path);
 	if (res == -1) return -errno;
 	return 0;
 }
